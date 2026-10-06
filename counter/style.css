@@ -54,23 +54,13 @@ button { font: inherit; }
 
 .defs { position: absolute; }
 
-/* room for the wobble filter past the edges */
-.iris { position: fixed; z-index: 10; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; filter: url(#ink); }
-.iris circle { fill: var(--osu-pink); stroke: #fff; stroke-width: 3; }
+.iris { position: fixed; z-index: 10; inset: 0; pointer-events: none; }
+.iris i { position: absolute; inset: 0; background: #fff; }
+.iris i + i { background: var(--osu-pink); }
 
-.opening {
-  position: fixed;
-  z-index: 5;
-  inset: var(--titlebar, 0px) 0 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 16px;
-  padding-bottom: 6vh;
-  background: var(--osu-b5);
-}
-.opening svg { overflow: visible; }
+.alone, .alone body { background: transparent; }
+.opening { position: fixed; inset: 0; display: grid; place-items: center; }
+.opening svg { overflow: visible; filter: drop-shadow(0 6px 12px rgb(0 0 0 / 0.35)); }
 .opening .disc { fill: var(--osu-b4); animation: disc-lit 1ms 900ms both; }
 .opening .rim { fill: none; stroke: var(--ink); stroke-width: 2; animation: rim-lit 1ms 900ms both; }
 @keyframes disc-lit { to { fill: var(--osu-pink); } }
@@ -84,8 +74,6 @@ button { font: inherit; }
   from { opacity: 1; transform: translate(116px, 54px) rotate(90deg) scale(0.6); }
   to { opacity: 1; transform: translate(118px, 54px) rotate(90deg) scale(1.1); }
 }
-.opening b { font-size: 20px; font-weight: 700; animation: appear 300ms 150ms steps(3) both; }
-@keyframes appear { from { opacity: 0; } }
 
 /* app.js draws its own scrollbar */
 ::-webkit-scrollbar { width: 0; height: 0; }
@@ -176,6 +164,8 @@ html, .framed main { overflow-x: hidden; }
 }
 
 .water { fill: var(--osu-b4); stroke: var(--ink); stroke-width: 2; animation: drift steps(10) infinite; }
+.scene .water:not(.edge) { stroke: none; }
+.water.edge { fill: none; }
 @keyframes drift { to { transform: translateX(-40px); } }
 .ripple { fill: none; stroke: var(--osu-b1); stroke-width: 2; stroke-linecap: round; }
 
@@ -267,7 +257,7 @@ html, .framed main { overflow-x: hidden; }
 .face::after { content: ""; position: absolute; inset: -1px; border: 2.5px solid #fff; border-radius: inherit; filter: var(--wobble); }
 .who { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .who .name { display: flex; align-items: baseline; gap: 8px; }
-.who .name b { overflow: hidden; font-size: 17px; font-weight: 700; line-height: 1.2; white-space: nowrap; text-overflow: ellipsis; }
+.who .name .profile { overflow: hidden; padding-bottom: 4px; margin-bottom: -4px; font-size: 17px; font-weight: 700; line-height: 1.2; white-space: nowrap; text-overflow: ellipsis; color: inherit; text-decoration: none; outline: none; }
 .who .name span { font-size: 12px; color: var(--osu-f1); white-space: nowrap; }
 .now { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--osu-f1); white-space: nowrap; }
 .now i { width: 8px; height: 8px; border-radius: 9999px; background: var(--osu-b1); }
@@ -316,6 +306,9 @@ html, .framed main { overflow-x: hidden; }
 .setting .reset { font-size: 12px; color: var(--osu-f1); }
 .setting .reset:hover:not(:disabled) { color: #fff; }
 .setting .reset:disabled { opacity: 0.4; cursor: default; }
+.settings .group { margin: 22px 0 2px; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--osu-f1); }
+.group + .setting::before { display: none; }
+.switch.locked { opacity: 0.6; cursor: default; }
 .swatches { display: grid; grid-template-columns: repeat(12, 1fr); gap: 6px; }
 .swatch {
   aspect-ratio: 1;
@@ -589,7 +582,7 @@ button.link {
 }
 .play .title { font-size: 15px; font-weight: 700; line-height: 1.25; }
 a.title { align-self: flex-start; max-width: 100%; padding-bottom: 4px; margin-bottom: -4px; color: inherit; text-decoration: none; outline: none; }
-a.title:hover, a.title:focus-visible {
+a.title:hover, a.title:focus-visible, .who .name .profile:hover, .who .name .profile:focus-visible {
   text-decoration: underline wavy var(--accent) 1.5px;
   text-underline-offset: 1px;
 }
@@ -613,8 +606,9 @@ a.title:hover, a.title:focus-visible {
 }
 .rating .dan.off { color: var(--osu-f1); }
 .play.fail .detail { color: var(--bad); }
-.play .remove { margin-left: 6px; font-size: 12px; color: var(--osu-f1); }
-.play .remove:hover:not(:disabled) { color: #fff; }
+.play .act { margin-left: 6px; font-size: 12px; color: var(--osu-f1); }
+.play .act:hover:not(:disabled) { color: #fff; }
+.play .detail > .act:first-child { margin-left: 0; }
 
 .mod {
   position: relative;

@@ -57,8 +57,8 @@ install from inside the app.
 All three update from inside the app. The .deb and .rpm ask for your password when installing an
 update.
 
-The tray icon needs `libayatana-appindicator`, which most desktops already have. Without it the app
-works the same, just without a tray icon.
+The tray icon needs a desktop that shows tray icons, like KDE or most panels and bars (GNOME needs
+the AppIndicator extension). Without one the app works the same, just without a tray icon.
 
 ## Getting started
 
@@ -70,8 +70,13 @@ When you finish a mania map it appears at the top of the list. It shows "Waiting
 osu! has saved the replay, and gets its stamp once Mania Tracker has checked it. Click a submitted
 play to see it on Mania Tracker.
 
+A play that hasn't been sent yet has Hold and Remove under it. Hold keeps it back until you press
+Send, and Remove drops it so it's never sent. Most plays go out a few seconds after the map ends,
+so these mostly matter for plays still waiting for their replay.
+
 Closing the window quits the app. If you'd rather keep it running out of the way, use the hide to
-tray button instead.
+tray button instead. In the tray the window is closed completely and only the part that sends your
+plays keeps running, so it takes very little memory.
 
 Plays you finish while the app isn't connected aren't sent later, so connect before you play. If
 you'd rather not think about it, turn on "Open Mania Bridge on startup" in the settings.
@@ -80,16 +85,22 @@ you'd rather not think about it, turn on "Open Mania Bridge on startup" in the s
 
 The gear in the top right corner opens the settings.
 
-"Share what I'm playing" is off by default. When you turn it on, your Mania Tracker profile shows
-what you're doing in osu! right now (in the menus, picking a song or playing) and on which map.
+"Send my plays" and "Share my live status" pick what goes to Mania Tracker, and one of them always
+stays on. Plays are on by default and the live status is off. The live status shows what you're
+doing in osu! right now (in the menus, picking a song, playing or watching a replay) and on which
+map. With plays off, the maps you finish are left alone, and plays still waiting to be sent wait
+until you turn plays back on.
 
-"Start tosu automatically" is also off by default. With it on, the app starts tosu in the
+"Open tosu with Mania Bridge" is off by default. With it on, the app starts tosu in the
 background when it opens and stops it again when it closes. Getting tosu through the app turns
 this on for you. It looks for tosu in the usual places. If yours is somewhere else, set the
 `TOSU_PATH` environment variable to the full path of the tosu program.
 
 "Open Mania Bridge on startup" is off by default. With it on, the app starts with your
 computer and goes straight to the tray, so it's already running when you play.
+
+"Start in the tray" is off by default. With it on, opening the app only puts its icon in the tray.
+Click the icon, or open the app again, to see the window.
 
 The theme color has the same presets and sliders as Mania Tracker.
 

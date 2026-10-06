@@ -1,0 +1,275 @@
+// the window, started by the background process. it says what happens on stdout and does what
+// it's told on stdin, and leaves when stdin closes
+
+use std::io::{BufRead, Write};
+use std::net::{SocketAddr, TcpStream};
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
+
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
+use tauri_plugin_updater::UpdaterExt;
+
+use crate::background::TELL;
+
+const MAIN: &str = "main";
+const OPENING: &str = "opening";
+
+static HELPER_PORT: OnceLock<u16> = OnceLock::new();
+
+struct Args {
+    url: String,
+    theme: (u16, u8),
+    place: Option<Place>,
+    opening: bool,
+}
+
+#[derive(Clone, Copy)]
+struct Place {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    maximized: bool,
+}
+
+fn parse(args: &[String]) -> Args {
+    let value = |name: &str| args.iter().find_map(|a| a.strip_prefix(&format!("--{name}=")).map(str::to_string));
+    let theme = value("theme")
+        .and_then(|t| {
+            let (h, s) = t.split_once(',')?;
+            Some((h.parse().ok()?, s.parse().ok()?))
+        })
+        .unwrap_or((333, 100));
+    let place = value("place").and_then(|p| {
+        let n: Vec<f64> = p.split(',').filter_map(|n| n.parse().ok()).collect();
+        (n.len() == 5).then(|| Place { x: n[0], y: n[1], width: n[2], height: n[3], maximized: n[4] != 0.0 })
+    });
+    Args {
+        url: value("url").unwrap_or_else(|| format!("http://127.0.0.1:{}{}", mania_bridge::DEFAULT_PORT, mania_bridge::COUNTER_PATH)),
+        theme,
+        place,
+        opening: args.iter().any(|a| a == "--opening"),
+    }
+}
+
+fn tell(line: &str) {
+    let mut out = std::io::stdout().lock();
+    let _ = writeln!(out, "{TELL}{line}");
+    let _ = out.flush();
+}
+
+pub fn run(args: &[String]) {
+    let args = parse(args);
+    if let Some(port) = port_of(&args.url) {
+        let _ = HELPER_PORT.set(port);
+    }
+    tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .setup(move |app| {
+            let handle = app.handle().clone();
+            build(&handle, &args, !args.opening)?;
+            if args.opening {
+                opening(&handle, &args.url);
+            }
+            std::thread::spawn(move || commands(handle));
+            Ok(())
+        })
+        .on_window_event(move |w, e| {
+            if w.label() != MAIN {
+                return;
+            }
+            match e {
+                // closing the window any other way than to the tray quits
+                WindowEvent::CloseRequested { .. } => tell("quit"),
+                WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
+                    if let Some(w) = w.app_handle().get_webview_window(MAIN) {
+                        report_place(&w);
+                    }
+                }
+                _ => {}
+            }
+        })
+        .build(tauri::generate_context!())
+        .expect("could not start the window")
+        .run(|_, _| {});
+}
+
+fn report_place(w: &WebviewWindow) {
+    let Ok(scale) = w.scale_factor() else { return };
+    let (Ok(at), Ok(size)) = (w.outer_position(), w.inner_size()) else { return };
+    if w.is_minimized().unwrap_or(false) {
+        return;
+    }
+    let (at, size) = (at.to_logical::<f64>(scale), size.to_logical::<f64>(scale));
+    let maximized = u8::from(w.is_maximized().unwrap_or(false));
+    tell(&format!("place {},{},{},{},{maximized}", at.x, at.y, size.width, size.height));
+}
+
+fn build(app: &AppHandle, args: &Args, visible: bool) -> tauri::Result<()> {
+    let mut window = WebviewWindowBuilder::new(app, MAIN, WebviewUrl::External(args.url.parse().expect("counter url")))
+        .title("Mania Bridge")
+        .visible(visible)
+        .inner_size(480.0, 640.0)
+        .min_inner_size(360.0, 400.0)
+        .decorations(!cfg!(windows))
+        // the theme's --osu-b5, no white flash before the page paints
+        .background_color(backdrop(args.theme))
+        // links that would open a new window (target=_blank) go to the browser instead
+        .on_new_window(|url, _| {
+            if matches!(url.scheme(), "http" | "https") {
+                mania_bridge::open_url(url.as_str());
+            }
+            tauri::webview::NewWindowResponse::Deny
+        });
+    if let Some(p) = args.place {
+        window = window.position(p.x, p.y).inner_size(p.width, p.height).maximized(p.maximized);
+    }
+    window.build()?;
+    Ok(())
+}
+
+// the main window loads hidden behind it and comes up once the animation is done
+fn opening(app: &AppHandle, url: &str) {
+    let splash = WebviewWindowBuilder::new(app, OPENING, WebviewUrl::External(format!("{url}?opening").parse().expect("counter url")))
+        .title("Mania Bridge")
+        .inner_size(200.0, 200.0)
+        .resizable(false)
+        .decorations(false)
+        .transparent(true)
+        .shadow(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .center()
+        .build();
+    if let Err(e) = splash {
+        eprintln!("no opening window: {e}");
+        return opened(app);
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(5));
+        let ready = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            if ready.get_webview_window(OPENING).is_some() {
+                opened(&ready);
+            }
+        });
+    });
+}
+
+fn opened(app: &AppHandle) {
+    show(app);
+    if let Some(w) = app.get_webview_window(OPENING) {
+        let _ = w.destroy();
+    }
+}
+
+fn show(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window(MAIN) {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+}
+
+fn commands(app: AppHandle) {
+    for line in std::io::stdin().lock().lines().map_while(Result::ok) {
+        let run = app.clone();
+        let _ = app.run_on_main_thread(move || command(&run, &line));
+    }
+    app.exit(0);
+}
+
+fn command(app: &AppHandle, line: &str) {
+    let (what, rest) = line.split_once(' ').unwrap_or((line, ""));
+    match what {
+        "show" if app.get_webview_window(OPENING).is_some() => opened(app),
+        "show" => show(app),
+        "opened" => opened(app),
+        "minimize" => {
+            if let Some(w) = app.get_webview_window(MAIN) {
+                let _ = w.minimize();
+            }
+        }
+        "drag" => {
+            if let Some(w) = app.get_webview_window(MAIN) {
+                let _ = w.start_dragging();
+            }
+        }
+        "update" => {
+            let (app, url) = (app.clone(), rest.to_string());
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = update(&app, &url).await {
+                    tell(&format!("update-failed {e}"));
+                }
+            });
+        }
+        _ => {}
+    }
+}
+
+async fn update(app: &AppHandle, url: &str) -> Result<(), String> {
+    let endpoint = url.parse().map_err(|e| format!("{e}"))?;
+    let updater = app
+        .updater_builder()
+        .endpoints(vec![endpoint])
+        .map_err(|e| e.to_string())?
+        // windows: the installer closes the app itself, the helper finishes up first
+        .on_before_exit(move || {
+            tell("shutdown");
+            if let Some(port) = HELPER_PORT.get() {
+                wait_until_closed(*port);
+            }
+        })
+        .build()
+        .map_err(|e| e.to_string())?;
+    let update = updater.check().await.map_err(|e| e.to_string())?.ok_or("There's no update for this copy.")?;
+    let mut done = 0u64;
+    let mut said = Instant::now() - Duration::from_secs(1);
+    let bytes = update
+        .download(
+            |chunk, total| {
+                done += chunk as u64;
+                if said.elapsed() >= Duration::from_millis(100) {
+                    said = Instant::now();
+                    tell(&format!("progress {done} {}", total.map(|t| t.to_string()).unwrap_or_default()));
+                }
+            },
+            || {},
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    // .deb and .rpm ask for the password here
+    tauri::async_runtime::spawn_blocking(move || update.install(bytes))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    tell("relaunch");
+    Ok(())
+}
+
+fn port_of(url: &str) -> Option<u16> {
+    let rest = url.strip_prefix("http://127.0.0.1:")?;
+    rest.split(['/', '?']).next()?.parse().ok()
+}
+
+fn wait_until_closed(port: u16) {
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let until = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < until && TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok() {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+// --osu-b5 of the theme: hsl(hue, 10% * sat, 15% - 8% * (1 - sat)), as rgb
+fn backdrop((hue, sat): (u16, u8)) -> tauri::window::Color {
+    let f = f32::from(sat) / 100.0;
+    let (h, s, l) = (f32::from(hue) / 360.0, 0.1 * f, 0.15 - 0.08 * (1.0 - f));
+    let a = s * l.min(1.0 - l);
+    let channel = |n: f32| {
+        let k = (n + h * 12.0) % 12.0;
+        let v = l - a * (k - 3.0).min(9.0 - k).clamp(-1.0, 1.0);
+        (v * 255.0).round() as u8
+    };
+    tauri::window::Color(channel(0.0), channel(8.0), channel(4.0), 255)
+}

@@ -55,6 +55,11 @@ pub struct Settings {
     pub presence: bool,
     #[serde(default, rename = "tosuAutostart")]
     pub tosu_autostart: bool,
+    #[serde(default, rename = "startInTray")]
+    pub start_in_tray: bool,
+    // only the live status, finished plays aren't sent
+    #[serde(default, rename = "presenceOnly")]
+    pub presence_only: bool,
     // the site's theme color: hue 0-359, saturation 0-100. unset is the default pink
     #[serde(default, rename = "themeHue", skip_serializing_if = "Option::is_none")]
     pub theme_hue: Option<u16>,
@@ -99,6 +104,9 @@ pub struct Item {
     pub poll_delay: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub held_from: Option<String>,
+    // the player held it back, it waits until they send it
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub on_hold: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq)]

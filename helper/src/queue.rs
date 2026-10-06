@@ -32,11 +32,14 @@ pub(crate) fn fail(b: &Arc<Bridge>, id: &str, phase: &str, code: &str, message: 
     b.broadcast();
 }
 
+// before it's completed on the site a play can still be taken back
+const UNSENT: [&str; 5] = ["waiting_replay", "send", "held", "failed", "unbound"];
+
 pub(crate) fn remove(b: &Arc<Bridge>, id: &str) -> bool {
     {
         let mut s = b.st();
         let before = s.queue.items.len();
-        s.queue.items.retain(|i| !(i.id == id && ["held", "failed", "unbound"].contains(&i.phase.as_str())));
+        s.queue.items.retain(|i| !(i.id == id && UNSENT.contains(&i.phase.as_str())));
         if s.queue.items.len() == before {
             return false;
         }
@@ -44,6 +47,21 @@ pub(crate) fn remove(b: &Arc<Bridge>, id: &str) -> bool {
     log!("removed a play that wasn't sent");
     b.save_queue_later();
     b.broadcast();
+    true
+}
+
+pub(crate) fn hold(b: &Arc<Bridge>, id: &str, on: bool) -> bool {
+    {
+        let mut s = b.st();
+        let Some(item) = s.queue.get_mut(id).filter(|i| ["waiting_replay", "send"].contains(&i.phase.as_str())) else { return false };
+        item.on_hold = on;
+        log!("{}: {}", title(item), if on { "on hold" } else { "sending after all" });
+    }
+    b.save_queue_later();
+    b.broadcast();
+    if !on {
+        wake_queue(b, 0);
+    }
     true
 }
 
@@ -99,8 +117,10 @@ fn next_due(b: &Arc<Bridge>) -> Option<Item> {
     }
     let mut changed = false;
     let mut active: Vec<usize> = vec![];
+    let sending = !s.sends_no_plays();
     for idx in 0..s.queue.items.len() {
-        if !["send", "poll", "held"].contains(&s.queue.items[idx].phase.as_str()) {
+        let i = &s.queue.items[idx];
+        if !["send", "poll", "held"].contains(&i.phase.as_str()) || ((i.on_hold || !sending) && i.phase == "send") {
             continue;
         }
         let mut matches = binding_matches(&s, &s.queue.items[idx]);
@@ -170,6 +190,8 @@ pub(crate) async fn pump(b: &Arc<Bridge>) {
             }
         };
         if let Some(slot) = b.st().queue.get_mut(&item.id) {
+            // held while it was being sent: that holds until it's completed
+            item.on_hold = slot.on_hold && item.phase == "send";
             *slot = item;
         }
         if let Some((status, message)) = problem {
@@ -482,6 +504,7 @@ pub(crate) fn public_item(item: &Item, origin: &str, username: Option<&str>) -> 
             "accuracy": item.play.accuracy,
         },
         "phase": item.phase,
+        "onHold": item.on_hold,
         "retryAt": if item.error.as_ref().is_some_and(|e| e.code == "retrying") { Some(item.next_attempt_at) } else { None },
         "receipt": r.map(|r| json!({
             "state": r.get("state"),

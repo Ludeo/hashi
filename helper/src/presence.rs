@@ -28,6 +28,30 @@ fn presence_state(tosu_state: &str) -> &'static str {
     }
 }
 
+// tosu has no replay or spectating flag, only the name on the play and the one osu! is signed in
+// as. offline lazer plays live as "Guest", and nobody can spectate while offline
+pub(crate) fn whose_play(raw: &Value, who: &str, account: Option<&str>) -> &'static str {
+    let same = |name: Option<&str>| name.is_some_and(|n| n.eq_ignore_ascii_case(who));
+    let Some(osu) = raw.pointer("/profile/name").and_then(Value::as_str).filter(|n| !n.is_empty()) else { return "playing" };
+    let status = raw.pointer("/profile/userStatus/name").and_then(Value::as_str);
+    let online = !osu.eq_ignore_ascii_case("guest") && !matches!(status, Some("offline" | "reconnecting" | "connecting"));
+    if same(Some(osu)) {
+        "playing"
+    } else if same(account) || !online {
+        "watching_replay"
+    } else {
+        "spectating"
+    }
+}
+
+fn site_has_state(s: &State, state: &str) -> bool {
+    s.caps
+        .as_ref()
+        .and_then(|c| c.pointer("/presence/states"))
+        .and_then(Value::as_array)
+        .is_some_and(|l| l.iter().any(|x| x.as_str() == Some(state)))
+}
+
 // the site ignores a map in these
 fn no_map(state: &str) -> bool {
     ["menu", "multiplayer", "idle"].contains(&state)
@@ -137,13 +161,16 @@ fn presence_body(s: &mut State) -> Option<Value> {
     }
     let bm = raw.get("beatmap").cloned().unwrap_or(json!({}));
     let mut state = presence_state(s.tosu.state.as_deref().unwrap_or(""));
-    // tosu has no spectating state; someone else's name on the play is the only sign
     let who = raw.pointer("/play/playerName").and_then(Value::as_str).filter(|x| !x.is_empty());
-    let me = raw.pointer("/profile/name").and_then(Value::as_str).filter(|x| !x.is_empty());
-    if let (true, Some(who), Some(me)) = (state == "playing", who, me) {
-        if who.to_lowercase() != me.to_lowercase() {
-            state = "spectating";
-        }
+    if state == "playing" && s.tosu.replay {
+        state = "watching_replay";
+    } else if let (true, Some(who)) = (state == "playing", who) {
+        let account = s.config.connection.as_ref().map(|c| crate::types::text(&c.username));
+        state = whose_play(raw, who, account.as_deref());
+    }
+    // older sites refuse states they don't list
+    if state == "watching_replay" && !site_has_state(s, state) {
+        state = "spectating";
     }
 
     let play_mode = raw.pointer("/play/mode/number").and_then(Value::as_u64);
@@ -185,6 +212,9 @@ fn presence_body(s: &mut State) -> Option<Value> {
         "mods": mods,
         "rate": rate,
     });
+    if matches!(state, "spectating" | "watching_replay") {
+        body["player"] = json!({ "username": clip(who.map(Value::from).as_ref()) });
+    }
 
     if state == "playing" {
         s.presence.started_at.get_or_insert_with(iso_now);

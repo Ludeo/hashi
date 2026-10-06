@@ -5,12 +5,16 @@ const app = document.getElementById("app");
 let snapshot = null;
 let helperDown = false;
 let busy = false;
+// controls only dim when a save takes a while, a quick one would just flicker them
+let slow = false;
 let unsaved = null;
 
 // kind: spin, done, wait, fail, off
 function playStatus(p) {
   const r = p.receipt;
   const retryAt = p.retryAt && `Trying again at ${time(new Date(p.retryAt).toISOString())}`;
+  if (p.onHold) return { kind: "wait", label: "On hold", detail: "Not sent until you send it." };
+  if (!snapshot.sendPlays && p.phase === "send") return { kind: "wait", label: "Not sending", detail: "Sending plays is off." };
   if (p.phase === "waiting_replay") return { kind: "spin", label: "Waiting for replay" };
   if (p.phase === "unbound") return { kind: "off", label: "Not sent", detail: "Wasn't connected when you played" };
   if (p.phase === "held") return { kind: "wait", label: "On hold", detail: p.error?.message };
@@ -157,11 +161,11 @@ function getTosu() {
   if (g.step === "failed") {
     return el("div", { class: "pinned failed" },
       el("p", {}, "Couldn't get tosu. ", el("span", { class: "why" }, g.error)),
-      el("button", { class: "key go", disabled: busy, onclick: get }, "Try again"));
+      el("button", { class: "key go", disabled: slow, onclick: get }, "Try again"));
   }
   return el("div", { class: "pinned" },
     el("p", {}, "Couldn't find tosu on this computer. Mania Bridge can get it for you."),
-    el("button", { class: "key go", disabled: busy, onclick: get }, "Get tosu"));
+    el("button", { class: "key go", disabled: slow, onclick: get }, "Get tosu"));
 }
 
 function tosuHint() {
@@ -206,25 +210,24 @@ function cross() {
   crossTimer = setTimeout(iris, CROSS_MS);
 }
 
+// plain fills under a clip-path, an ink filter over the whole window is too slow to animate
 async function iris() {
   const sign = document.querySelector(".sign.landing circle")?.getBoundingClientRect();
   if (!crossAt || !sign) return;
-  const r = sign.width / 2;
-  const cx = sign.x + r;
-  const cy = sign.y + r;
-  document.body.insertAdjacentHTML("beforeend",
-    `<svg class="iris" aria-hidden="true"><circle cx="${cx}" cy="${cy}" r="${r}"/></svg>`);
-  const cover = document.body.lastElementChild;
-  const disc = cover.firstChild;
-  const full = Math.hypot(Math.max(cx, innerWidth - cx), Math.max(cy, innerHeight - cy)) + 8;
-  await disc.animate({ r: [`${r}px`, `${full}px`] },
-    { duration: 380, easing: "cubic-bezier(0.5, 0, 0.9, 0.4)", fill: "forwards" }).finished;
+  const from = { x: sign.x + sign.width / 2, y: sign.y + sign.height / 2, r: sign.width / 2 };
+  const cover = el("div", { class: "iris" }, el("i"), el("i"));
+  document.body.append(cover);
+  const move = (a, b, timing) => Promise.all([...cover.children].map((layer, i) => {
+    const clip = ({ x, y, r }) => `circle(${Math.max(0, r + (i ? -1.5 : 1.5))}px at ${x}px ${y}px)`;
+    return layer.animate({ clipPath: [clip(a), clip(b)] }, { ...timing, fill: "forwards" }).finished;
+  }));
+  const full = { ...from, r: Math.hypot(Math.max(from.x, innerWidth - from.x), Math.max(from.y, innerHeight - from.y)) + 8 };
+  await move(from, full, { duration: 380, easing: "cubic-bezier(0.5, 0, 0.9, 0.4)" });
   crossAt = 0;
   render();
   const face = document.querySelector(".me .face")?.getBoundingClientRect();
-  const to = face ? { cx: face.x + face.width / 2, cy: face.y + face.height / 2, r: face.width / 2 } : { cx, cy, r: 0 };
-  await disc.animate({ cx: [`${cx}px`, `${to.cx}px`], cy: [`${cy}px`, `${to.cy}px`], r: [`${full}px`, `${to.r}px`] },
-    { duration: 420, easing: "cubic-bezier(0.3, 0.6, 0.2, 1)", fill: "forwards" }).finished;
+  const to = face ? { x: face.x + face.width / 2, y: face.y + face.height / 2, r: face.width / 2 } : { ...from, r: 0 };
+  await move(full, to, { duration: 420, easing: "cubic-bezier(0.3, 0.6, 0.2, 1)" });
   await cover.animate({ opacity: [1, 0] }, { duration: 160, fill: "forwards" }).finished;
   cover.remove();
 }
@@ -241,6 +244,8 @@ function bridge(rows, pose) {
   // first note reaches the sign 72% into its loop
   const lit = 150 + crossNoteMs * 0.72;
   const water = `M${-reach} 246q10-3 20 0${"t20 0".repeat(reach / 10 + 19)}V300H${-reach}z`;
+  // filled outside the wobble: webkitgtk's filters shift dark colors a little, and the river under it isn't filtered
+  const drift = loop(4000);
   const node = el("div", { class: "scene" }, Object.entries(rows).map(([at, r]) =>
     el("div", { class: `tag at-${at} is-${r.state}` },
       el("b", {}, r.name),
@@ -276,7 +281,10 @@ function bridge(rows, pose) {
       <path class="glyph" d="M356 159h12v-8l14 13-14 13v-8h-12z" style="${pose === "flat" ? "" : loop(1000)}"/>
     </g>
     ${landing ? `<path class="line spark" d="M-14-4l-7-8M0-9v-11M14-4l7-8" style="animation-delay: ${lit - crossed}ms"/>` : ""}
-    <path class="water" d="${water}" style="${loop(4000)}"/>
+  </g>
+    <path class="water" d="${water}" style="${drift}"/>
+    <g class="ink">
+    <path class="water edge" d="${water}" style="${drift}"/>
     <path class="ripple" d="M88 259q5-3 10 0t10 0M286 262q5-3 10 0t10 0M12 263q5-3 10 0"/>
     ${notes.map((style) => `<path class="line splash" d="M-8-2l-5-7M0-4v-9M8-2l5-7" style="${style}"/>`).join("")}
   </g></svg>`);
@@ -371,9 +379,14 @@ function time(iso) {
 }
 
 async function action(name) {
+  if (busy) return;
   busy = true;
   unsaved = null;
-  render();
+  lockedHint = null;
+  const dim = setTimeout(() => {
+    slow = true;
+    render();
+  }, 300);
   try {
     const res = await fetch(`${BRIDGE}/${name}`, { method: "POST" });
     if (res.ok) snapshot = await res.json();
@@ -381,7 +394,8 @@ async function action(name) {
   } catch {
     helperDown = true;
   } finally {
-    busy = false;
+    clearTimeout(dim);
+    busy = slow = false;
     render();
   }
 }
@@ -397,7 +411,9 @@ function playRow(p) {
   const diff = [p.play.keys ? `${Math.round(p.play.keys)}K` : null, p.play.version].filter(Boolean).join(" ");
   const acc = typeof p.play.accuracy === "number" && p.play.accuracy > 0 ? `${p.play.accuracy.toFixed(2)}%` : null;
   const mods = modList(p.play.mods);
-  const removable = ["held", "failed", "unbound"].includes(p.phase);
+  const holdable = ["waiting_replay", "send"].includes(p.phase);
+  const removable = holdable || ["held", "failed", "unbound"].includes(p.phase);
+  const play = (what) => () => action(`plays/${encodeURIComponent(p.id)}/${what}`);
 
   const name = `${p.play.artist ?? ""} - ${chartName(p.play)}`;
   return el("li", { class: `play ${status.kind}` },
@@ -412,8 +428,9 @@ function playRow(p) {
         p.play.client === "lazer" && el("span", {}, "lazer"),
         mods.length > 0 && el("span", { class: "mods" }, mods.map(modBadge)),
         acc && el("span", {}, acc)),
-      (status.detail || removable) && el("span", { class: "detail" }, status.detail,
-        removable && el("button", { class: "link remove", disabled: busy, onclick: () => action(`plays/${encodeURIComponent(p.id)}/remove`) }, "Remove")),
+      (status.detail || removable) && el("span", { class: "detail" }, status.detail && el("span", {}, status.detail),
+        holdable && el("button", { class: "link act", disabled: slow, onclick: play(p.onHold ? "send" : "hold") }, p.onHold ? "Send" : "Hold"),
+        removable && el("button", { class: "link act", disabled: slow, onclick: play("remove") }, "Remove")),
       rating(p.rating),
     ),
     el("div", { class: "side" },
@@ -452,7 +469,7 @@ function playList(plays) {
 }
 
 const PRESENCE_NOTES = {
-  off: "Off. Only finished plays are sent.",
+  off: "Shown on your profile while osu! is open.",
   unsupported: "Mania Tracker doesn't support this yet.",
   needs_reconnect: "Mania Tracker needs your OK first.",
   sharing: "Shown on your profile while osu! is open.",
@@ -462,12 +479,12 @@ const PRESENCE_NOTES = {
 function tosuAutostartNote(on, launch) {
   if (launch === "with-osu") return "tosu opens with osu! here.";
   if (snapshot.getTosu && !snapshot.getTosu.step) {
-    return ["Couldn't find tosu on this computer. ", el("button", { class: "link", disabled: busy, onclick: () => action("get-tosu") }, "Get tosu")];
+    return ["Couldn't find tosu on this computer. ", el("button", { class: "link", disabled: slow, onclick: () => action("get-tosu") }, "Get tosu")];
   }
-  if (!on) return "Off. Open tosu yourself before you play.";
+  if (!on) return null;
   if (launch === "missing") return "Couldn't find tosu on this computer.";
   if (launch === "failed") return "tosu didn't start.";
-  return "Opens tosu in the background and closes it when you quit.";
+  return null;
 }
 
 // cached so the page opens in the right color before the helper answers
@@ -494,6 +511,7 @@ function isDefaultTheme({ hue, sat }) {
 }
 
 function pickTheme(theme) {
+  if (busy) return;
   // so the next redraw doesn't flash the old value
   snapshot.theme = theme;
   applyTheme(theme);
@@ -517,7 +535,7 @@ function themeStrip(label, key, max, gradient) {
     }
   });
   return el("input", {
-    type: "range", class: "strip", min: 0, max, value: theme[key], "aria-label": label, disabled: busy,
+    type: "range", class: "strip", min: 0, max, value: theme[key], "aria-label": label, disabled: slow,
     style: `--track: ${gradient}`,
     onpointerdown: () => (themeDraft = { ...theme }),
     oninput: (e) => {
@@ -537,14 +555,14 @@ function themeSetting() {
       el("span", { class: "title" }, "Theme color"),
       el("div", { class: "swatches" }, PRESET_HUES.map(([hue, name]) => el("button", {
         class: `swatch${hue === theme.hue ? " on" : ""}`, title: name, "aria-label": name,
-        "aria-pressed": String(hue === theme.hue), disabled: busy,
+        "aria-pressed": String(hue === theme.hue), disabled: slow,
         style: `background: hsl(${hue}, ${theme.sat}%, 65%)`,
         onclick: () => pickTheme({ ...theme, hue }),
       }))),
       themeStrip("Theme hue", "hue", 359, RAINBOW),
       themeStrip("Theme saturation", "sat", 100,
         `linear-gradient(to right, hsl(${theme.hue},0%,2%), hsl(${theme.hue},3%,8%) 22%, hsl(${theme.hue},18%,18%) 48%, hsl(${theme.hue},55%,56%) 76%, hsl(${theme.hue},100%,70%))`)),
-    el("button", { class: "link reset", disabled: busy || isDefaultTheme(theme), onclick: () => pickTheme(DEFAULT_THEME) }, "Reset"));
+    el("button", { class: "link reset", disabled: slow || isDefaultTheme(theme), onclick: () => pickTheme(DEFAULT_THEME) }, "Reset"));
 }
 
 function getUpdate() {
@@ -565,82 +583,102 @@ function update() {
   if (u.step === "failed") {
     return el("div", { class: "pinned failed" },
       el("p", {}, "Couldn't update to ", version, ". ", el("span", { class: "why" }, u.error)),
-      el("button", { class: "key go", disabled: busy, onclick: () => action("update/install") }, "Try again"),
-      el("button", { class: "link", disabled: busy, onclick: () => action("update/download") }, "Download"));
+      el("button", { class: "key go", disabled: slow, onclick: () => action("update/install") }, "Try again"),
+      el("button", { class: "link", disabled: slow, onclick: () => action("update/download") }, "Download"));
   }
   return el("div", { class: "pinned" },
     el("p", {}, "Mania Bridge ", version, " is out."),
-    el("button", { class: "key go", disabled: busy, onclick: getUpdate }, u.install ? "Update" : "Download"),
-    el("button", { class: "link", disabled: busy, onclick: () => action("update/later") }, "Later"));
+    el("button", { class: "key go", disabled: slow, onclick: getUpdate }, u.install ? "Update" : "Download"),
+    el("button", { class: "link", disabled: slow, onclick: () => action("update/later") }, "Later"));
 }
 
 let settingsOpen = false;
 
-function settings(c, host, reconnect) {
+function toggle(title, on, path, note, cls = "") {
+  return el("div", { class: `setting${cls}` },
+    el("div", { class: "text" },
+      el("span", { class: "title" }, title),
+      note && el("span", { class: "line" }, note)),
+    el("button", {
+      class: `switch${on ? " on" : ""}`,
+      role: "switch",
+      "aria-checked": String(on),
+      "aria-label": title,
+      disabled: slow,
+      onclick: () => action(`${path}/${on ? "off" : "on"}`),
+    }, el("i")));
+}
+
+// plays, live status or both: never neither, then the app would do nothing
+let lockedHint = null;
+
+function sharing() {
   const p = snapshot.presence;
-  const note = p && (p.status === "error" ? p.message : PRESENCE_NOTES[p.status]);
+  const plays = snapshot.sendPlays;
+  const live = p.enabled;
+  const liveAvailable = p.status !== "unsupported";
+  const liveNote = p.status === "error" ? p.message : PRESENCE_NOTES[p.status];
+  const hint = "Keep one of them on, or nothing is sent.";
+  const row = (key, title, on, locked, can, next, line, cls) => el("div", { class: `setting${lockedHint === key ? " is-error" : cls}` },
+    el("div", { class: "text" },
+      el("span", { class: "title" }, title),
+      lockedHint === key ? el("span", { class: "line" }, hint) : line && el("span", { class: "line" }, line)),
+    el("button", {
+      class: `switch${on ? " on" : ""}${locked ? " locked" : ""}`,
+      role: "switch",
+      "aria-checked": String(on),
+      "aria-label": title,
+      disabled: slow || (!on && !can),
+      onclick: () => {
+        if (locked) {
+          lockedHint = key;
+          return render();
+        }
+        action(`sharing/${next}`);
+      },
+    }, el("i")));
+  return [
+    row("plays", "Send my plays", plays, plays && !(live && liveAvailable), true, plays ? "live" : live ? "both" : "plays",
+      !plays && "Off. The maps you finish aren't sent.", ""),
+    row("live", "Share my live status", live, live && !plays, liveAvailable, live ? "plays" : plays ? "both" : "live",
+      live ? liveNote : p.status === "unsupported" && liveNote, live ? ` is-${p.status}` : ""),
+  ];
+}
+
+function settings(c, host, reconnect) {
   const t = snapshot.tosuAutostart;
   const { launch } = snapshot.tosu;
+  const tosuNote = tosuAutostartNote(t, launch);
+  const computer = [
+    t != null && toggle("Open tosu with Mania Bridge", t, "tosu-autostart", tosuNote,
+      t && ["missing", "failed"].includes(launch) ? " is-error" : ""),
+    snapshot.autostart != null && toggle("Open Mania Bridge on startup", snapshot.autostart, "autostart"),
+    snapshot.startInTray != null && toggle("Start in the tray", snapshot.startInTray, "start-in-tray"),
+  ].filter(Boolean);
   return el("div", { class: "settings" },
     el("div", { class: "head" },
       el("p", { class: "say" }, "Settings"),
       el("button", { class: "link", onclick: toggleSettings }, "Back to plays")),
     unsaved && el("p", { class: "status bad" }, unsaved),
-    p && el("div", { class: `setting is-${p.status}` },
-      el("div", { class: "text" },
-        el("span", { class: "title" }, "Share what I'm playing"),
-        note && el("span", { class: "line" }, note,
-          p.enabled && p.status === "needs_reconnect"
-            && [" ", el("button", { class: "link", disabled: busy, onclick: () => action("connect") }, "Connect again")])),
-      el("button", {
-        class: `switch${p.enabled ? " on" : ""}`,
-        role: "switch",
-        "aria-checked": String(p.enabled),
-        "aria-label": "Share what I'm playing",
-        disabled: busy,
-        onclick: () => action(p.enabled ? "presence/off" : "presence/on"),
-      }, el("i"))),
-    t != null && el("div", { class: `setting${t && ["missing", "failed"].includes(launch) ? " is-error" : ""}` },
-      el("div", { class: "text" },
-        el("span", { class: "title" }, "Start tosu automatically"),
-        el("span", { class: "line" }, tosuAutostartNote(t, launch))),
-      el("button", {
-        class: `switch${t ? " on" : ""}`,
-        role: "switch",
-        "aria-checked": String(t),
-        "aria-label": "Start tosu automatically",
-        disabled: busy,
-        onclick: () => action(t ? "tosu-autostart/off" : "tosu-autostart/on"),
-      }, el("i"))),
-    snapshot.autostart != null && el("div", { class: "setting" },
-      el("div", { class: "text" },
-        el("span", { class: "title" }, "Open Mania Bridge on startup"),
-        el("span", { class: "line" }, snapshot.autostart
-          ? snapshot.tray ? "Starts in the tray, out of the way." : "Opens when your computer starts."
-          : "Off. Open it yourself before you play.")),
-      el("button", {
-        class: `switch${snapshot.autostart ? " on" : ""}`,
-        role: "switch",
-        "aria-checked": String(snapshot.autostart),
-        "aria-label": "Open Mania Bridge on startup",
-        disabled: busy,
-        onclick: () => action(snapshot.autostart ? "autostart/off" : "autostart/on"),
-      }, el("i"))),
-    snapshot.theme && themeSetting(),
+    el("p", { class: "group" }, "Mania Tracker"),
+    sharing(),
     el("div", { class: "setting" },
       el("div", { class: "text" },
         el("span", { class: "title" }, "Connected as ", c.username),
         host && el("span", { class: "line" }, host)),
       reconnect
-        ? el("button", { class: "key go", disabled: busy, onclick: () => action("connect") }, "Connect again")
-        : el("button", { class: "key danger", disabled: busy, onclick: () => action("disconnect") }, "Disconnect")),
+        ? el("button", { class: "key go", disabled: slow, onclick: () => action("connect") }, "Connect again")
+        : el("button", { class: "key danger", disabled: slow, onclick: () => action("disconnect") }, "Disconnect")),
+    computer.length > 0 && [el("p", { class: "group" }, "This computer"), ...computer],
+    snapshot.theme && [el("p", { class: "group" }, "Look"), themeSetting()],
     el("p", { class: "about" }, `Mania Bridge ${snapshot.version}`,
       snapshot.update && !snapshot.update.step
-        && [" · ", el("button", { class: "link", disabled: busy, onclick: getUpdate }, `${snapshot.update.install ? "Update to" : "Get"} ${snapshot.update.version}`)]));
+        && [" · ", el("button", { class: "link", disabled: slow, onclick: getUpdate }, `${snapshot.update.install ? "Update to" : "Get"} ${snapshot.update.version}`)]));
 }
 
 function toggleSettings() {
   settingsOpen = !settingsOpen;
+  lockedHint = null;
   render();
 }
 
@@ -693,22 +731,31 @@ function home(c, host) {
       el("span", { class: "face" }, face(c)),
       el("div", { class: "who" },
         el("div", { class: "name" },
-          el("b", { style: c.accent && `color: ${c.accent}` }, c.username),
+          el("a", {
+            class: "profile",
+            href: `${c.origin}/player/${encodeURIComponent(c.username)}`,
+            target: "_blank",
+            rel: "noreferrer",
+            title: "Open your profile on Mania Tracker",
+            style: c.accent && `color: ${c.accent}`,
+          }, c.username),
           host && el("span", {}, host)),
         now())),
     update(),
     tosuHint(),
     statusLine(c),
     reconnect && !settingsOpen
-      && el("button", { class: "key go", disabled: busy, onclick: () => action("connect") }, "Connect again"),
+      && el("button", { class: "key go", disabled: slow, onclick: () => action("connect") }, "Connect again"),
     helperDown && el("p", { class: "status warn" }, "Lost the bridge helper. Reconnecting."),
     settingsOpen
       ? settings(c, host, reconnect)
       : snapshot.plays.length
         ? playList(snapshot.plays)
         : el("div", { class: "nothing" },
-            el("p", { class: "say" }, "No plays yet."),
-            el("p", { class: "lead" }, "Finish a mania map and it shows up here."),
+            el("p", { class: "say" }, snapshot.sendPlays ? "No plays yet." : "Sending plays is off."),
+            el("p", { class: "lead" }, snapshot.sendPlays
+              ? "Finish a mania map and it shows up here."
+              : "The maps you finish stay off your profile. Turn it back on in the settings."),
             waiting(), el("i"), el("i"), el("i")));
 }
 
@@ -771,7 +818,7 @@ function render() {
     el("div", { class: "cross" },
       connecting
         ? el("button", { class: "primary waiting", disabled: true }, "Waiting for the browser")
-        : el("button", { class: "primary", disabled: busy, onclick: () => action("connect") }, "Connect to Mania Tracker"),
+        : el("button", { class: "primary", disabled: slow, onclick: () => action("connect") }, "Connect to Mania Tracker"),
       host && el("span", { class: "host" }, host)),
     connecting
       ? el("p", { class: "note" },
@@ -828,13 +875,11 @@ function listen() {
     helperDown = false;
     showTitlebar();
     render();
-    closeOpening();
   };
   events.addEventListener("reload", () => location.reload());
   events.onerror = () => {
     helperDown = true;
     render();
-    closeOpening();
   };
 }
 
@@ -863,7 +908,7 @@ function inkFilter() {
   const frame = (now) => {
     requestAnimationFrame(frame);
     // 30fps
-    if (now - last < 30 || STILL.matches || !document.querySelector(".scene, .iris, .opening")) return;
+    if (now - last < 30 || STILL.matches || !document.querySelector(".scene, .opening")) return;
     last = now;
     let t = (now - start) / INK_MS;
     if (t >= 1) {
@@ -956,40 +1001,27 @@ function scrollbar() {
 }
 
 const OPENING_MS = 1300;
-let opening = null;
 
-function openingScreen() {
-  const query = new URLSearchParams(location.search);
-  if (!query.has("opening")) return;
-  query.delete("opening");
-  history.replaceState(null, "", `${location.pathname}${query.size ? `?${query}` : ""}`);
-  if (STILL.matches) return;
-  const node = el("div", { class: "opening" });
-  node.innerHTML = `<svg viewBox="0 0 160 160" width="160" height="160" aria-hidden="true"><g class="ink">
-    <clipPath id="opening-disc"><circle cx="80" cy="80" r="70"/></clipPath>
-    <circle class="disc" cx="80" cy="80" r="70"/>
-    <g clip-path="url(#opening-disc)">
-      <path class="arrow" d="M50 39h29V23l32 31-32 31V69H50z"/>
-      <path class="line spark" d="M-14-4l-7-8M0-9v-11M14-4l7-8"/>
-      <path class="deck" d="M-10 103H19Q80 74 141 103H170V147H111A31 33 0 0 0 49 147H-10z"/>
-      <path class="water" d="M-60 131q10-3 20 0${"t20 0".repeat(13)}V170H-60z" style="${loop(4000)}"/>
-    </g>
-    <circle class="rim" cx="80" cy="80" r="70"/>
-  </g></svg>`;
-  node.append(el("b", {}, "Mania Bridge"));
-  document.body.append(node);
-  opening = { node, at: Date.now() };
-}
-
-function closeOpening() {
-  if (!opening || opening.closing) return;
-  opening.closing = true;
-  const { node, at } = opening;
-  setTimeout(async () => {
+async function openingScreen() {
+  document.documentElement.classList.add("alone");
+  if (!STILL.matches) {
+    const node = el("div", { class: "opening" });
+    node.innerHTML = `<svg viewBox="0 0 160 160" width="160" height="160" aria-hidden="true"><g class="ink">
+      <clipPath id="opening-disc"><circle cx="80" cy="80" r="70"/></clipPath>
+      <circle class="disc" cx="80" cy="80" r="70"/>
+      <g clip-path="url(#opening-disc)">
+        <path class="arrow" d="M50 39h29V23l32 31-32 31V69H50z"/>
+        <path class="line spark" d="M-14-4l-7-8M0-9v-11M14-4l7-8"/>
+        <path class="deck" d="M-10 103H19Q80 74 141 103H170V147H111A31 33 0 0 0 49 147H-10z"/>
+        <path class="water" d="M-60 131q10-3 20 0${"t20 0".repeat(13)}V170H-60z" style="${loop(4000)}"/>
+      </g>
+      <circle class="rim" cx="80" cy="80" r="70"/>
+    </g></svg>`;
+    document.body.append(node);
+    await new Promise((resolve) => setTimeout(resolve, OPENING_MS));
     await node.animate({ opacity: [1, 0] }, { duration: 240, easing: "steps(4)", fill: "forwards" }).finished;
-    node.remove();
-    opening = null;
-  }, Math.max(0, OPENING_MS - (Date.now() - at)));
+  }
+  windowAction("opened");
 }
 
 const done = new URLSearchParams(location.search).get("done");
@@ -997,8 +1029,8 @@ try { applyTheme(JSON.parse(localStorage.getItem(THEME_KEY)) ?? DEFAULT_THEME); 
 inkFilter();
 scrollbar();
 if (done) donePage(done === "yes");
+else if (new URLSearchParams(location.search).has("opening")) openingScreen();
 else {
-  openingScreen();
   listen();
   render();
 }

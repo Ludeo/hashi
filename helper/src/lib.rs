@@ -284,6 +284,12 @@ pub(crate) struct State {
     pub autostart: Option<bool>,
 }
 
+impl State {
+    pub(crate) fn sends_no_plays(&self) -> bool {
+        self.config.settings.as_ref().is_some_and(|x| x.presence_only)
+    }
+}
+
 pub struct Bridge {
     pub env: Env,
     pub(crate) opts: Options,
@@ -354,6 +360,8 @@ impl Bridge {
             "getTosu": get_tosu::public(self, &s),
             "autostart": autostart,
             "tosuAutostart": self.env.tosu_can_start.then(|| s.config.settings.as_ref().is_some_and(|x| x.tosu_autostart)),
+            "startInTray": self.opts.tray.then(|| s.config.settings.as_ref().is_some_and(|x| x.start_in_tray)),
+            "sendPlays": !s.sends_no_plays(),
             "plays": items.into_iter().map(|i| queue::public_item(i, &self.env.origin, profile.as_deref())).collect::<Vec<_>>(),
         })
     }
@@ -375,6 +383,29 @@ impl Bridge {
             set.theme_sat = (sat != DEFAULT_SAT).then_some(sat);
         }
         let saved = self.save_config().await;
+        self.broadcast();
+        saved
+    }
+
+    pub(crate) async fn set_send_plays(self: &Arc<Self>, on: bool) -> bool {
+        self.st().config.settings.get_or_insert_with(Default::default).presence_only = !on;
+        let saved = self.save_config().await;
+        log!("sending plays {}", if on { "on" } else { "off" });
+        self.broadcast();
+        if on {
+            queue::wake_queue(self, 0);
+        }
+        saved
+    }
+
+    pub fn starts_in_tray(&self) -> bool {
+        self.opts.tray && self.st().config.settings.as_ref().is_some_and(|x| x.start_in_tray)
+    }
+
+    pub(crate) async fn set_start_in_tray(self: &Arc<Self>, on: bool) -> bool {
+        self.st().config.settings.get_or_insert_with(Default::default).start_in_tray = on;
+        let saved = self.save_config().await;
+        log!("starting in the tray {}", if on { "on" } else { "off" });
         self.broadcast();
         saved
     }

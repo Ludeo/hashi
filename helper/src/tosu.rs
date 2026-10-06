@@ -28,6 +28,8 @@ pub(crate) struct LastPlay {
     beatmap_mode: Value,
     mods: Value,
     player_name: Value,
+    // "playing", or someone else's play / a replay, which aren't sent
+    whose: &'static str,
     beatmap: Beatmap,
     // lazer gives paths relative to files/, by hash
     chart_file: Option<String>,
@@ -61,6 +63,10 @@ pub(crate) struct TosuState {
     last_play: Option<LastPlay>,
     last_result_shown: Option<String>,
     viewed_result: Option<String>,
+    // results of the last play finished here, a retry starts from those
+    last_finished: Option<String>,
+    // started from the results of some other score: stable's local scores open there first
+    pub replay: bool,
     pending_finish: Option<PendingFinish>,
     connected_at: i64,
     exe: Option<PathBuf>,
@@ -85,6 +91,8 @@ impl TosuState {
             last_play: None,
             last_result_shown: None,
             viewed_result: None,
+            last_finished: None,
+            replay: false,
             pending_finish: None,
             connected_at: 0,
             exe: None,
@@ -144,6 +152,7 @@ fn on_tosu_message(b: &Arc<Bridge>, raw: Value) {
     let mut finished = None;
     {
         let mut s = b.st();
+        let account = s.config.connection.as_ref().map(|c| crate::types::text(&c.username));
         let t = &mut s.tosu;
         t.last_frame_at = now_ms();
         if !t.osu {
@@ -172,6 +181,7 @@ fn on_tosu_message(b: &Arc<Bridge>, raw: Value) {
             if t.prev_state.as_deref() != Some("play") {
                 // retry or watch replay from results, remember which score was up
                 t.viewed_result = if t.prev_state.as_deref() == Some("resultScreen") { t.last_result_shown.clone() } else { None };
+                t.replay = t.viewed_result.is_some() && t.viewed_result != t.last_finished;
             }
             let bm = raw.get("beatmap").cloned().unwrap_or(json!({}));
             let g = |v: &Value, k: &str| v.get(k).cloned().unwrap_or(Value::Null);
@@ -183,6 +193,11 @@ fn on_tosu_message(b: &Arc<Bridge>, raw: Value) {
                 beatmap_mode: g(&bm, "mode"),
                 mods: raw.pointer("/play/mods").cloned().unwrap_or(Value::Null),
                 player_name: raw.pointer("/play/playerName").cloned().unwrap_or(Value::Null),
+                whose: match raw.pointer("/play/playerName").and_then(Value::as_str).filter(|x| !x.is_empty()) {
+                    _ if t.replay => "watching_replay",
+                    Some(who) => crate::presence::whose_play(&raw, who, account.as_deref()),
+                    None => "playing",
+                },
                 beatmap: Beatmap {
                     md5: str_of(bm.get("checksum")).map(|c| c.to_lowercase()),
                     artist: g(&bm, "artist"),
@@ -224,6 +239,9 @@ fn on_tosu_message(b: &Arc<Bridge>, raw: Value) {
             let fresh = state == "resultScreen" && populated(&rs) && Some(result_key(&rs)) != pending.stale;
             if state != "resultScreen" || fresh || now_ms() - pending.since > 5000 {
                 let finish = t.pending_finish.take().unwrap();
+                if fresh && finish.play.whose == "playing" {
+                    t.last_finished = Some(result_key(&rs));
+                }
                 finished = Some((finish, fresh.then_some(rs)));
             }
         }
@@ -246,6 +264,9 @@ fn on_play_finished(b: &Arc<Bridge>, finish: PendingFinish, rs: Option<Value>) {
     let PendingFinish { play, viewed, stale, .. } = finish;
     let bm = &play.beatmap;
     let label = format!("{} - {} [{}]", crate::types::text(&bm.artist), crate::types::text(&bm.title), crate::types::text(&bm.version));
+    if play.whose != "playing" {
+        return log!("skip ({}, {}): {label}", play.whose.replace('_', " "), crate::types::text(&play.player_name));
+    }
     // same results as before = watched the replay
     if rs.is_none() && viewed.is_some() && viewed == stale {
         return log!("skip (watched replay): {label}");
@@ -267,6 +288,10 @@ fn on_play_finished(b: &Arc<Bridge>, finish: PendingFinish, rs: Option<Value>) {
 
     let item = {
         let mut s = b.st();
+        if s.sends_no_plays() {
+            drop(s);
+            return log!("skip (sending plays is off): {label}");
+        }
         // watch replay right after playing
         if truthy(&created) && s.queue.items.iter().any(|i| i.play.beatmap_md5 == md5 && i.play.result_created_at == created) {
             drop(s);
@@ -314,6 +339,7 @@ fn on_play_finished(b: &Arc<Bridge>, finish: PendingFinish, rs: Option<Value>) {
             chart_needed: None,
             poll_delay: None,
             held_from: None,
+            on_hold: false,
         };
         s.queue.items.push(item.clone());
         item

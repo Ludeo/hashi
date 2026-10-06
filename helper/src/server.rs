@@ -17,7 +17,7 @@ use crate::{autostart, get_tosu, log, presence, queue, replays, tosu, update, Br
 #[folder = "../counter/"]
 struct Counter;
 
-const WINDOW_ACTIONS: [&str; 4] = ["hide", "minimize", "close", "drag"];
+const WINDOW_ACTIONS: [&str; 6] = ["show", "hide", "minimize", "close", "drag", "opened"];
 
 fn counter_type(path: &str) -> &'static str {
     match path.rsplit('.').next().unwrap_or("") {
@@ -183,6 +183,24 @@ async fn route(b: &Arc<Bridge>, req: Request, has_origin: bool) -> Response<Body
             let ok = tosu::set_tosu_autostart(b, path == "/tosu-autostart/on").await;
             return saved(b, ok);
         }
+        // /sharing/both, /sharing/plays, /sharing/live
+        if let Some(choice) = path.strip_prefix("/sharing/") {
+            let Some((plays, live)) = (match choice {
+                "both" => Some((true, true)),
+                "plays" => Some((true, false)),
+                "live" => Some((false, true)),
+                _ => None,
+            }) else {
+                return empty(404);
+            };
+            let plays_saved = b.set_send_plays(plays).await;
+            let live_saved = presence::set_presence_setting(b, live).await;
+            return saved(b, plays_saved && live_saved);
+        }
+        if path == "/start-in-tray/on" || path == "/start-in-tray/off" {
+            let ok = b.set_start_in_tray(path == "/start-in-tray/on").await;
+            return saved(b, ok);
+        }
         if path == "/update/download" {
             update::open_download_page(b);
             return json(200, &b.snapshot());
@@ -192,6 +210,10 @@ async fn route(b: &Arc<Bridge>, req: Request, has_origin: bool) -> Response<Body
                 Ok(()) => json(200, &b.snapshot()),
                 Err(e) => json(500, &serde_json::json!({ "error": format!("Couldn't change that: {e}") })),
             };
+        }
+        // /plays/<id>/hold, /plays/<id>/send
+        if let Some((id, what)) = path.strip_prefix("/plays/").and_then(|r| r.rsplit_once('/')).filter(|(_, w)| ["hold", "send"].contains(w)) {
+            return if queue::hold(b, id, what == "hold") { json(200, &b.snapshot()) } else { empty(404) };
         }
         // /plays/<id>/remove
         if let Some(id) = path.strip_prefix("/plays/").and_then(|r| r.strip_suffix("/remove")) {
