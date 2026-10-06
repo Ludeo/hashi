@@ -1,0 +1,6 @@
+Usecase: obs-overlay
+Name: Mania Bridge
+Version: 0.1.0
+Author: Aleju03
+CompatibleWith: tosu
+Resolution: 520x640

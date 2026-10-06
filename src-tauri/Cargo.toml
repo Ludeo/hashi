@@ -1,0 +1,24 @@
+[package]
+name = "mania-bridge"
+description = "Mania Bridge"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+futures-util = { version = "0.3", default-features = false }
+mania-bridge-helper = { path = "../helper" }
+serde_json = "1"
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-single-instance = "2"
+tauri-plugin-updater = "2"
+tokio = { version = "1", features = ["time", "signal"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-registry = "0.6"

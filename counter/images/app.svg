@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <clipPath id="disc"><circle cx="256" cy="256" r="256"/></clipPath>
+    <radialGradient id="mauve"><stop offset="0" stop-color="#b98aa8"/><stop offset=".45" stop-color="#b98aa8" stop-opacity=".8"/><stop offset="1" stop-color="#b98aa8" stop-opacity="0"/></radialGradient>
+    <radialGradient id="coral"><stop offset="0" stop-color="#ff9690"/><stop offset=".45" stop-color="#ff9690" stop-opacity=".8"/><stop offset="1" stop-color="#ff9690" stop-opacity="0"/></radialGradient>
+    <radialGradient id="peach"><stop offset="0" stop-color="#ffc9b6"/><stop offset=".45" stop-color="#ffc9b6" stop-opacity=".8"/><stop offset="1" stop-color="#ffc9b6" stop-opacity="0"/></radialGradient>
+    <radialGradient id="sage"><stop offset="0" stop-color="#d6edcc"/><stop offset=".45" stop-color="#d6edcc" stop-opacity=".8"/><stop offset="1" stop-color="#d6edcc" stop-opacity="0"/></radialGradient>
+    <radialGradient id="pink"><stop offset="0" stop-color="#ff94a2"/><stop offset=".45" stop-color="#ff94a2" stop-opacity=".8"/><stop offset="1" stop-color="#ff94a2" stop-opacity="0"/></radialGradient>
+    <filter id="ink" x="-10%" y="-10%" width="120%" height="120%" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="0.013" numOctaves="2" seed="7"/>
+      <feDisplacementMap in="SourceGraphic" scale="15" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+  </defs>
+  <g clip-path="url(#disc)">
+    <rect width="512" height="512" fill="#fba3ad"/>
+    <circle cx="390" cy="70" r="250" fill="url(#mauve)"/>
+    <circle cx="40" cy="190" r="210" fill="url(#pink)"/>
+    <circle cx="455" cy="290" r="150" fill="url(#coral)"/>
+    <circle cx="100" cy="420" r="210" fill="url(#peach)"/>
+    <circle cx="275" cy="470" r="190" fill="url(#sage)"/>
+    <circle cx="250" cy="80" r="70" fill="url(#pink)"/>
+    <rect y="440" width="512" height="72" fill="#e9f5e2"/>
+    <g filter="url(#ink)" stroke="#fff" stroke-width="11" stroke-linejoin="round" stroke-linecap="round">
+      <path d="M-30 330H60Q256 236 452 330H542V470H356A100 104 0 0 0 156 470H-30z" fill="#781c48"/>
+      <path d="M160 126h92v-52l104 100-104 100v-52h-92z" fill="#781c48"/>
+      <path d="M-30 418q22-9 44 0t44 0t44 0t44 0t44 0t44 0t44 0t44 0t44 0t44 0t44 0t44 0t44 0t44 0V560H-30z" fill="#e9f5e2" stroke-width="9"/>
+    </g>
+  </g>
+</svg>

@@ -1,0 +1,36 @@
+[package]
+name = "mania-bridge-helper"
+description = "sends finished osu!mania plays to mania tracker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "mania_bridge"
+
+[dependencies]
+async-stream = "0.3"
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "query"] }
+base64 = "0.22"
+bytes = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+md-5 = "0.10"
+notify = { version = "8", default-features = false }
+open = "5"
+p256 = { version = "0.13", features = ["ecdsa", "pkcs8", "pem"] }
+percent-encoding = "2"
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2", "json"] }
+rust-embed = "8"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
+sha2 = "0.10"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-tungstenite = "0.26"
+url = "2"
+uuid = { version = "1", features = ["v4"] }
+zip = { version = "4", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-registry = "0.6"
