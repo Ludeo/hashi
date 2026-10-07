@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 use tokio::sync::oneshot;
 
 use crate::types::{Connection, Jwk, Key};
-use crate::{iso_now, log, now_ms, queue, Bridge, Env, State, APP_NAME, CALLBACK_PATH, CLIENT_ID, COUNTER_PATH, PRESENCE_SCOPE, SCOPES, VERSION};
+use crate::{iso_now, log, now_ms, queue, Bridge, Env, State, APP_NAME, CALLBACK_PATH, CLIENT_ID, OLD_CALLBACK_PATH, COUNTER_PATH, PRESENCE_SCOPE, SCOPES, VERSION};
 
 pub(crate) enum Fail {
     // ConnectionProblem: the connection itself is in trouble, uploads stop
@@ -247,7 +247,8 @@ pub(crate) async fn refresh_access(b: &Arc<Bridge>) -> Result<(), Fail> {
         }
         let err = payload.get("error").and_then(Value::as_str).unwrap_or("");
         if ["invalid_grant", "invalid_dpop_proof", "invalid_client"].contains(&err) {
-            let desc = payload.get("error_description").and_then(Value::as_str).unwrap_or("This connection is no longer valid.");
+            // the site doesn't say whether it was removed, ran out or never existed
+            let desc = payload.get("error_description").and_then(Value::as_str).unwrap_or(GONE);
             return Err(Fail::Conn("revoked", desc.into()));
         }
         return Err(Fail::Conn("offline", format!("Refresh failed ({} {err}).", res.status).replace(" )", ")")));
@@ -294,9 +295,14 @@ pub(crate) async fn api(b: &Arc<Bridge>, path_or_url: &str, req: Req) -> Result<
     Ok(res)
 }
 
+pub(crate) const GONE: &str = "Mania Tracker doesn't accept this connection anymore. It was removed on the site, or it expired. Connect again.";
+
 pub(crate) fn set_connection(b: &Arc<Bridge>, status: &str, message: Option<String>) {
     {
         let mut s = b.st();
+        if s.connection.status != status && ["revoked", "error", "not_in_beta", "disabled"].contains(&status) {
+            log!("connection {status}: {}", message.as_deref().unwrap_or(""));
+        }
         s.connection.status = status.into();
         s.connection.message = message;
         if status != "connecting" {
@@ -417,9 +423,14 @@ pub(crate) async fn start_connect(b: &Arc<Bridge>) -> Result<(), Fail> {
     let attempt = Arc::new(Attempt::new(tx));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.map_err(|e| Fail::Other(e.to_string()))?;
     let port = listener.local_addr().map_err(|e| Fail::Other(e.to_string()))?.port();
-    let redirect_uri = format!("http://127.0.0.1:{port}{CALLBACK_PATH}");
+    // a site with the bridge's own sign-in page also takes the bridge's own callback path
+    let (authorize_endpoint, callback_path) = match caps.get("bridge_authorization_endpoint").and_then(Value::as_str) {
+        Some(e) => (e.to_string(), CALLBACK_PATH),
+        None => (cap(&caps, "authorization_endpoint"), OLD_CALLBACK_PATH),
+    };
+    let redirect_uri = format!("http://127.0.0.1:{port}{callback_path}");
     let (stop_tx, stop_rx) = oneshot::channel::<()>();
-    crate::server::serve_callback(b, listener, state.clone(), attempt.clone(), stop_rx);
+    crate::server::serve_callback(b, listener, callback_path, state.clone(), attempt.clone(), stop_rx);
 
     let (scope, thumbprint) = {
         let s = b.st();
@@ -445,7 +456,7 @@ pub(crate) async fn start_connect(b: &Arc<Bridge>) -> Result<(), Fail> {
     .map(|(k, v)| format!("{k}={}", percent_encoding::utf8_percent_encode(v, COMPONENT)))
     .collect::<Vec<_>>()
     .join("&");
-    let authorize = format!("{}?{query}", cap(&caps, "authorization_endpoint"));
+    let authorize = format!("{authorize_endpoint}?{query}");
 
     let before = {
         let mut s = b.st();

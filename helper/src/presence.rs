@@ -159,7 +159,8 @@ fn presence_body(s: &mut State) -> Option<Value> {
     if !s.tosu.osu {
         return None;
     }
-    let bm = raw.get("beatmap").cloned().unwrap_or(json!({}));
+    let null = Value::Null;
+    let bm = raw.get("beatmap").unwrap_or(&null);
     let mut state = presence_state(s.tosu.state.as_deref().unwrap_or(""));
     let who = raw.pointer("/play/playerName").and_then(Value::as_str).filter(|x| !x.is_empty());
     if state == "playing" && s.tosu.replay {
@@ -189,9 +190,9 @@ fn presence_body(s: &mut State) -> Option<Value> {
         .or(bm.pointer("/stats/cs/original").and_then(Value::as_f64))
         .unwrap_or(0.0)
         .round() as i64;
-    let mods_raw = raw.pointer("/play/mods").cloned().unwrap_or(Value::Null);
-    let mods = mod_acronyms(&mods_raw);
-    let rate = mod_rate(&mods_raw, &mods);
+    let mods_raw = raw.pointer("/play/mods").unwrap_or(&null);
+    let mods = mod_acronyms(mods_raw);
+    let rate = mod_rate(mods_raw, &mods);
     let beatmap = match md5 {
         Some(md5) if !no_map(state) => json!({
             "md5": md5,

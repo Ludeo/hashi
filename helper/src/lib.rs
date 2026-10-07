@@ -27,7 +27,9 @@ use types::{Config, Queue};
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 const APP_NAME: &str = "Mania Bridge";
 const CLIENT_ID: &str = "mania-bridge";
-const CALLBACK_PATH: &str = "/companella/callback";
+const CALLBACK_PATH: &str = "/mania-bridge/callback";
+// sites from before /bridge/authorize only take this one
+const OLD_CALLBACK_PATH: &str = "/companella/callback";
 const PRESENCE_SCOPE: &str = "companella:presence:write";
 const SCOPES: [&str; 4] = [
     "companella:scores:submit",
@@ -185,10 +187,7 @@ impl Env {
         };
         let data_dir = var("BRIDGE_DATA_DIR").map(PathBuf::from).unwrap_or(config_root.join("mania-bridge"));
         let old_data_dir = var("BRIDGE_DATA_DIR").is_none().then(|| config_root.join("mania-bridge-test"));
-        let tosu_port = tosu_host.split(':').nth(1).unwrap_or("24050").to_string();
         let counter_origins = HashSet::from([
-            format!("http://{tosu_host}"),
-            format!("http://localhost:{tosu_port}"),
             format!("http://127.0.0.1:{port}"),
             format!("http://localhost:{port}"),
         ]);
@@ -447,7 +446,7 @@ impl Bridge {
     }
 
     pub async fn shutdown(self: &Arc<Self>) {
-        tosu::stop_tosu(self);
+        tosu::stop_tosu(self).await;
         if self.st().presence.sent.is_some() {
             let _ = tokio::time::timeout(Duration::from_millis(1500), presence::clear_presence(self)).await;
         }
@@ -660,9 +659,21 @@ pub async fn start(opts: Options) -> Result<Arc<Bridge>, String> {
         let mut five = tokio::time::interval(Duration::from_secs(5));
         let mut tick = tokio::time::interval(Duration::from_millis(presence::PRESENCE_TICK_MS));
         minute.tick().await;
+        let mut minutes = 0u32;
         loop {
             tokio::select! {
                 _ = minute.tick() => {
+                    minutes += 1;
+                    // it can stay up for weeks in the tray
+                    if minutes % (24 * 60) == 0 {
+                        let b = b.clone();
+                        b.clone().spawn(async move {
+                            if queue::prune_queue(&b).await {
+                                b.save_queue().await;
+                                b.broadcast();
+                            }
+                        });
+                    }
                     let status = b.st().connection.status.clone();
                     if status == "offline" || status == "not_in_beta" {
                         let b = b.clone();

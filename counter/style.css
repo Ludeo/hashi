@@ -229,8 +229,9 @@ html, .framed main { overflow-x: hidden; }
 .river .blocked code:hover { background: var(--osu-b3); }
 .blocked code.copied::after { content: "  copied"; color: var(--good); }
 
-.me { position: relative; display: flex; align-items: center; gap: 12px; padding: 2px 96px 16px 4px; }
-.framed .me { padding-right: 40px; }
+.me { position: relative; display: flex; align-items: center; gap: 12px; padding: 2px 4px 16px; }
+/* below this the window's own buttons would sit on the header's right end, so it starts under them */
+@media (max-width: 700px) { :root:not(.framed) .home { padding-top: 16px; } }
 .me::after, .play + .play::before, .setting::before, .settings .about::before {
   content: "";
   position: absolute;
@@ -498,8 +499,6 @@ button.link {
 
 .corner { position: fixed; z-index: 1; top: 8px; right: 8px; display: flex; gap: 2px; }
 .framed .corner { top: calc(var(--titlebar) + 8px); }
-.corner .gear svg { width: 14px; height: 14px; }
-.corner .gear.on { background: var(--osu-b3); color: #fff; }
 .corner button {
   display: grid;
   place-items: center;
@@ -514,6 +513,23 @@ button.link {
 .corner .icon { display: grid; }
 .corner button:hover { background: var(--osu-b4); color: #fff; }
 .corner .close:hover { background: #e81123; }
+
+.gear {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--osu-f1);
+  cursor: pointer;
+}
+.gear .icon { display: grid; }
+.gear svg { width: 16px; height: 16px; }
+.gear:hover { background: var(--osu-b4); color: #fff; }
+.gear.on { background: var(--osu-b3); color: #fff; }
 
 /* windows title bar. main scrolls so the scrollbar stays under it */
 .framed { --titlebar: 32px; }

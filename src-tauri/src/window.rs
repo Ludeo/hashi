@@ -142,10 +142,16 @@ fn opening(app: &AppHandle, url: &str) {
         .skip_taskbar(true)
         .center()
         .build();
-    if let Err(e) = splash {
-        eprintln!("no opening window: {e}");
-        return opened(app);
-    }
+    let splash = match splash {
+        Ok(w) => w,
+        Err(e) => {
+            eprintln!("no opening window: {e}");
+            return opened(app);
+        }
+    };
+    // hyprland floats it at half the screen whatever size it asks for, and all of that would
+    // catch clicks
+    let _ = splash.set_ignore_cursor_events(true);
     let app = app.clone();
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_secs(5));

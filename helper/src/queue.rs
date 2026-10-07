@@ -16,6 +16,8 @@ pub(crate) struct PumpState {
     // 429
     paused_until: i64,
     pumping: bool,
+    // woken while pumping, look once more before stopping
+    again: bool,
 }
 
 fn title(item: &Item) -> String {
@@ -175,10 +177,23 @@ pub(crate) async fn pump(b: &Arc<Bridge>) {
     {
         let mut s = b.st();
         if s.pump.pumping {
+            s.pump.again = true;
             return;
         }
         s.pump.pumping = true;
+        s.pump.again = false;
     }
+    loop {
+        pump_due(b).await;
+        let mut s = b.st();
+        if !std::mem::take(&mut s.pump.again) {
+            s.pump.pumping = false;
+            return;
+        }
+    }
+}
+
+async fn pump_due(b: &Arc<Bridge>) {
     while let Some(mut item) = next_due(b) {
         let result = step(b, &mut item).await;
         let problem = match result {
@@ -201,7 +216,6 @@ pub(crate) async fn pump(b: &Arc<Bridge>) {
         b.save_queue().await;
         b.broadcast();
     }
-    b.st().pump.pumping = false;
 }
 
 fn state_of(receipt: &Value) -> &str {
@@ -247,6 +261,10 @@ async fn step(b: &Arc<Bridge>, item: &mut Item) -> Result<(), Fail> {
             }
             item.chart_sent = true;
         }
+        // removed, held or sending turned off while the files went up: completing is what makes it count
+        if !still_wanted(b, &item.id) {
+            return Ok(());
+        }
         let id = item.submission_id.clone().unwrap_or_default();
         let res = api(b, &format!("/submissions/{id}/complete"), Req::method(reqwest::Method::POST)).await?;
         let body = res.json();
@@ -270,6 +288,11 @@ async fn step(b: &Arc<Bridge>, item: &mut Item) -> Result<(), Fail> {
     }
     retry_later(item, "The server kept asking for the files again.", None);
     Ok(())
+}
+
+fn still_wanted(b: &Arc<Bridge>, id: &str) -> bool {
+    let s = b.st();
+    !s.sends_no_plays() && s.queue.items.iter().any(|i| i.id == id && !i.on_hold)
 }
 
 fn manifest(item: &Item) -> Value {
@@ -417,8 +440,11 @@ fn handle_error(b: &Arc<Bridge>, item: &mut Item, res: &Resp, body: &Value, stag
             retry_later(item, "The access token expired again right after a refresh.", None);
             return Ok(None);
         }
-        if ["installation_revoked", "token_revoked", "invalid_token", "wrong_environment"].contains(&code.as_str()) {
-            return Err(Fail::Conn("revoked", "This installation was revoked. Connect again.".into()));
+        if code == "installation_revoked" {
+            return Err(Fail::Conn("revoked", "This connection was removed on Mania Tracker. Connect again.".into()));
+        }
+        if ["token_revoked", "invalid_token", "wrong_environment"].contains(&code.as_str()) {
+            return Err(Fail::Conn("revoked", auth::GONE.into()));
         }
         // key_mismatch, invalid_dpop_proof, htu_mismatch, ...
         return Err(Fail::Conn("error", format!("The server refused this client's proof ({code}). Uploads are stopped.")));
@@ -520,12 +546,14 @@ pub(crate) fn public_item(item: &Item, origin: &str, username: Option<&str>) -> 
     })
 }
 
-// keep finished plays 30 days
-pub(crate) async fn prune_queue(b: &Arc<Bridge>) {
+// keep finished plays 30 days. true if any went
+pub(crate) async fn prune_queue(b: &Arc<Bridge>) -> bool {
     let cutoff = crate::iso_from_ms(now_ms() - 30 * 24 * 3600_000);
-    let keep: std::collections::HashSet<String> = {
+    let (keep, pruned): (std::collections::HashSet<String>, bool) = {
         let mut s = b.st();
+        let before = s.queue.items.len();
         s.queue.items.retain(|i| !(["done", "failed", "unbound"].contains(&i.phase.as_str()) && i.captured_at < cutoff));
+        let pruned = s.queue.items.len() != before;
         let mut keep: std::collections::HashSet<String> =
             s.queue.items.iter().flat_map(|i| [i.replay.as_ref(), i.chart.as_ref()]).flatten().map(|x| x.sha256.clone()).collect();
         for raw in &s.queue.unparsed {
@@ -535,14 +563,20 @@ pub(crate) async fn prune_queue(b: &Arc<Bridge>) {
                 }
             }
         }
-        keep
+        (keep, pruned)
     };
-    let Ok(mut dir) = tokio::fs::read_dir(&b.env.blob_dir).await else { return };
+    let Ok(mut dir) = tokio::fs::read_dir(&b.env.blob_dir).await else { return pruned };
     while let Ok(Some(e)) = dir.next_entry().await {
-        if !keep.contains(e.file_name().to_string_lossy().as_ref()) {
+        if keep.contains(e.file_name().to_string_lossy().as_ref()) {
+            continue;
+        }
+        // a replay being matched right now is stored before its play points at it
+        let old = e.metadata().await.and_then(|m| m.modified()).is_ok_and(|t| t.elapsed().is_ok_and(|d| d > Duration::from_secs(3600)));
+        if old {
             let _ = tokio::fs::remove_file(e.path()).await;
         }
     }
+    pruned
 }
 
 #[cfg(test)]

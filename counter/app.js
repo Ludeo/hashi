@@ -94,9 +94,11 @@ function modBadge(mod) {
 
 function cover(p) {
   let node = covers.get(p.id);
-  if (!node) {
+  // the cover can turn up later, once the chart is found
+  if (!node || (p.cover && !node.dataset.cover)) {
     node = el("div", { class: "cover" });
     if (p.cover) {
+      node.dataset.cover = "yes";
       const img = new Image();
       img.onload = () => {
         node.style.setProperty("--cover", `url("${img.src}")`);
@@ -740,7 +742,8 @@ function home(c, host) {
             style: c.accent && `color: ${c.accent}`,
           }, c.username),
           host && el("span", {}, host)),
-        now())),
+        now()),
+      el("button", { class: `gear${settingsOpen ? " on" : ""}`, title: "Settings", "aria-pressed": String(settingsOpen), onclick: toggleSettings }, icon(GEAR))),
     update(),
     tosuHint(),
     statusLine(c),
@@ -790,12 +793,10 @@ function render() {
   const atHome = hasAccount && !crossAt;
   if (!atHome) settingsOpen = false;
 
-  const own = !snapshot.titlebar && location.origin === BRIDGE;
-  if (own || atHome) {
+  if (!snapshot.titlebar && location.origin === BRIDGE) {
     app.append(el("div", { class: "corner" },
-      atHome && el("button", { class: `gear${settingsOpen ? " on" : ""}`, title: "Settings", "aria-pressed": String(settingsOpen), onclick: toggleSettings }, icon(GEAR)),
-      own && snapshot.tray && el("button", { title: "Hide to tray", onclick: () => windowAction("hide") }, icon(TRAY)),
-      own && el("button", { class: "close", title: "Quit", onclick: () => windowAction("close") }, icon(`<path d="m.5.5 9 9m0-9-9 9"/>`))));
+      snapshot.tray && el("button", { title: "Hide to tray", onclick: () => windowAction("hide") }, icon(TRAY)),
+      el("button", { class: "close", title: "Quit", onclick: () => windowAction("close") }, icon(`<path d="m.5.5 9 9m0-9-9 9"/>`))));
   }
 
   if (atHome) {
@@ -833,6 +834,7 @@ function render() {
   app.append(el("div", { class: `connect${full ? " full" : ""}` },
     intro(crossAt ? "flat" : connecting ? "down" : "up"),
     el("div", { class: "river" }, river, full && riverbed())));
+  wakeInk();
 
   if (helperDown) app.append(el("p", { class: "status warn" }, "Lost the bridge helper. Reconnecting."));
   if (snapshot.plays.length) app.append(playList(snapshot.plays));
@@ -905,25 +907,39 @@ function inkFilter() {
   let seed = 2;
   let start = 0;
   let last = 0;
+  let running = false;
   const frame = (now) => {
-    requestAnimationFrame(frame);
     // 30fps
-    if (now - last < 30 || STILL.matches || !document.querySelector(".scene, .opening")) return;
-    last = now;
-    let t = (now - start) / INK_MS;
-    if (t >= 1) {
-      from.setAttribute("seed", seed);
-      to.setAttribute("seed", (seed = seed % 999 + 1));
-      start = now;
-      t = 0;
+    if (now - last >= 30) {
+      if (STILL.matches || !document.querySelector(".scene, .opening")) {
+        running = false;
+        return;
+      }
+      last = now;
+      let t = (now - start) / INK_MS;
+      if (t >= 1) {
+        from.setAttribute("seed", seed);
+        to.setAttribute("seed", (seed = seed % 999 + 1));
+        start = now;
+        t = 0;
+      }
+      mix.setAttribute("k2", 1 - t);
+      mix.setAttribute("k3", t);
+      // averaging two patterns flattens it, compensate
+      push.setAttribute("scale", INK / Math.hypot(1 - t, t));
     }
-    mix.setAttribute("k2", 1 - t);
-    mix.setAttribute("k3", t);
-    // averaging two patterns flattens it, compensate
-    push.setAttribute("scale", INK / Math.hypot(1 - t, t));
+    requestAnimationFrame(frame);
   };
-  requestAnimationFrame(frame);
+  wakeInk = () => {
+    if (running) return;
+    running = true;
+    requestAnimationFrame(frame);
+  };
+  STILL.addEventListener("change", wakeInk);
 }
+
+// the loop stops while nothing on screen is inked
+let wakeInk = () => {};
 
 // ?done: where the browser lands after the consent page
 function donePage(ok) {
@@ -943,6 +959,7 @@ function donePage(ok) {
       el("p", { class: "say" }, ok ? "Connected." : "Nothing was connected."),
       el("p", { class: "lead" }, "You can close this tab."),
       riverbed())));
+  wakeInk();
 }
 
 let resized = 0;
@@ -1018,6 +1035,7 @@ async function openingScreen() {
       <circle class="rim" cx="80" cy="80" r="70"/>
     </g></svg>`;
     document.body.append(node);
+    wakeInk();
     await new Promise((resolve) => setTimeout(resolve, OPENING_MS));
     await node.animate({ opacity: [1, 0] }, { duration: 240, easing: "steps(4)", fill: "forwards" }).finished;
   }

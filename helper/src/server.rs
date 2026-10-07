@@ -10,7 +10,7 @@ use bytes::Bytes;
 use tokio::sync::{broadcast, oneshot};
 
 use crate::auth::{self, Attempt};
-use crate::{autostart, get_tosu, log, presence, queue, replays, tosu, update, Bridge, CALLBACK_PATH, COUNTER_PATH, DEFAULT_PORT};
+use crate::{autostart, get_tosu, log, presence, queue, replays, tosu, update, Bridge, COUNTER_PATH, DEFAULT_PORT};
 
 // built in for releases, read from disk in debug builds so edits show up right away
 #[derive(rust_embed::Embed)]
@@ -274,13 +274,13 @@ pub(crate) fn serve(b: &Arc<Bridge>, listener: tokio::net::TcpListener) {
     });
 }
 
-pub(crate) fn serve_callback(b: &Arc<Bridge>, listener: tokio::net::TcpListener, state: String, attempt: Arc<Attempt>, stop: oneshot::Receiver<()>) {
+pub(crate) fn serve_callback(b: &Arc<Bridge>, listener: tokio::net::TcpListener, callback_path: &'static str, state: String, attempt: Arc<Attempt>, stop: oneshot::Receiver<()>) {
     let port = b.env.port;
     let app = Router::new().fallback(move |req: Request| {
         let state = state.clone();
         let attempt = attempt.clone();
         async move {
-            if req.uri().path() != CALLBACK_PATH {
+            if req.uri().path() != callback_path {
                 return empty(404);
             }
             let q: std::collections::HashMap<String, String> =

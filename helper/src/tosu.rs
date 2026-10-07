@@ -70,7 +70,8 @@ pub(crate) struct TosuState {
     pending_finish: Option<PendingFinish>,
     connected_at: i64,
     exe: Option<PathBuf>,
-    kill: Option<oneshot::Sender<()>>,
+    // send it where to say it's stopped
+    kill: Option<oneshot::Sender<oneshot::Sender<()>>>,
 }
 
 impl TosuState {
@@ -183,14 +184,15 @@ fn on_tosu_message(b: &Arc<Bridge>, raw: Value) {
                 t.viewed_result = if t.prev_state.as_deref() == Some("resultScreen") { t.last_result_shown.clone() } else { None };
                 t.replay = t.viewed_result.is_some() && t.viewed_result != t.last_finished;
             }
-            let bm = raw.get("beatmap").cloned().unwrap_or(json!({}));
+            let null = Value::Null;
+            let bm = raw.get("beatmap").unwrap_or(&null);
             let g = |v: &Value, k: &str| v.get(k).cloned().unwrap_or(Value::Null);
-            let files = raw.get("files").cloned().unwrap_or(Value::Null);
+            let files = raw.get("files").unwrap_or(&null);
             let background = str_of(files.get("background")).filter(|x| !x.is_empty());
             t.last_play = Some(LastPlay {
                 client: client.into(),
                 mode: raw.pointer("/play/mode").cloned().unwrap_or(Value::Null),
-                beatmap_mode: g(&bm, "mode"),
+                beatmap_mode: g(bm, "mode"),
                 mods: raw.pointer("/play/mods").cloned().unwrap_or(Value::Null),
                 player_name: raw.pointer("/play/playerName").cloned().unwrap_or(Value::Null),
                 whose: match raw.pointer("/play/playerName").and_then(Value::as_str).filter(|x| !x.is_empty()) {
@@ -200,10 +202,10 @@ fn on_tosu_message(b: &Arc<Bridge>, raw: Value) {
                 },
                 beatmap: Beatmap {
                     md5: str_of(bm.get("checksum")).map(|c| c.to_lowercase()),
-                    artist: g(&bm, "artist"),
-                    title: g(&bm, "title"),
-                    version: g(&bm, "version"),
-                    set: g(&bm, "set"),
+                    artist: g(bm, "artist"),
+                    title: g(bm, "title"),
+                    version: g(bm, "version"),
+                    set: g(bm, "set"),
                     keys: bm
                         .pointer("/stats/cs/converted")
                         .filter(|v| !v.is_null())
@@ -371,13 +373,13 @@ pub(crate) fn connect_tosu(b: &Arc<Bridge>) {
                 log!("tosu connected");
                 b.broadcast();
                 while let Some(Ok(msg)) = ws.next().await {
-                    let text = match msg {
-                        Message::Text(t) => t.to_string(),
-                        Message::Binary(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                    let parsed = match msg {
+                        Message::Text(t) => serde_json::from_str::<Value>(t.as_str()),
+                        Message::Binary(bytes) => serde_json::from_slice::<Value>(&bytes),
                         Message::Close(_) => break,
                         _ => continue,
                     };
-                    match serde_json::from_str::<Value>(&text) {
+                    match parsed {
                         Ok(raw) => on_tosu_message(&b, raw),
                         Err(e) => log!("tosu frame error: {e}"),
                     }
@@ -421,8 +423,10 @@ pub(crate) fn watch_osu_frames(b: &Arc<Bridge>) {
                 b2.broadcast();
             }
             n += 1;
-            if n % 5 == 0 {
-                check_tosu_blocked(&b2);
+            // walks all of /proc on linux
+            if n % 15 == 0 {
+                let b3 = b2.clone();
+                tokio::task::spawn_blocking(move || check_tosu_blocked(&b3));
             }
         }
     });
@@ -458,7 +462,7 @@ fn check_tosu_blocked(b: &Arc<Bridge>) {
         let scope: i64 = std::fs::read_to_string("/proc/sys/kernel/yama/ptrace_scope").ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0);
         if scope >= 1 && find_process(&["osu!", "osu!.exe"]).is_some() {
             let exe = exe.or_else(|| find_process(&["tosu"]).and_then(|pid| std::fs::read_link(format!("/proc/{pid}/exe")).ok()));
-            let shown = exe.map(|e| e.display().to_string()).unwrap_or("path/to/tosu".into());
+            let shown = exe.map(|e| shell_quote(&e.display().to_string())).unwrap_or("path/to/tosu".into());
             blocked = Some(format!("sudo setcap cap_sys_ptrace=eip {shown}"));
         }
     }
@@ -476,6 +480,14 @@ fn check_tosu_blocked(b: &Arc<Bridge>) {
     if changed {
         b.broadcast();
     }
+}
+
+// for a command that gets copied into a terminal
+fn shell_quote(s: &str) -> String {
+    if !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || "/._-+:@%,=".contains(c)) {
+        return s.into();
+    }
+    format!("'{}'", s.replace('\'', r"'\''"))
 }
 
 fn subdirs(parent: &Path, prefix: &str) -> Vec<PathBuf> {
@@ -628,8 +640,11 @@ fn start_tosu(b: &Arc<Bridge>) {
                         let code = status.ok().and_then(|s| s.code()).map_or("null".into(), |c| c.to_string());
                         failed(format!("exited with {code}"));
                     }
-                    _ = kill_rx => {
+                    stopped = kill_rx => {
                         let _ = child.kill().await;
+                        if let Ok(stopped) = stopped {
+                            let _ = stopped.send(());
+                        }
                     }
                 }
             }
@@ -638,8 +653,22 @@ fn start_tosu(b: &Arc<Bridge>) {
 }
 
 // only the one we started, a tosu the player opened stays up
-pub(crate) fn stop_tosu(b: &Arc<Bridge>) {
-    if let Some(kill) = b.st().tosu.kill.take() {
-        let _ = kill.send(());
+// waits for it, the process is about to exit and kill_on_drop doesn't run then
+pub(crate) async fn stop_tosu(b: &Arc<Bridge>) {
+    let kill = b.st().tosu.kill.take();
+    let Some(kill) = kill else { return };
+    let (stopped_tx, stopped) = oneshot::channel();
+    if kill.send(stopped_tx).is_ok() {
+        let _ = tokio::time::timeout(Duration::from_millis(500), stopped).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn quoting() {
+        assert_eq!(super::shell_quote("/home/a/.local/bin/tosu"), "/home/a/.local/bin/tosu");
+        assert_eq!(super::shell_quote("/home/a/My Apps/tosu"), "'/home/a/My Apps/tosu'");
+        assert_eq!(super::shell_quote("/x/it's/$tosu"), r"'/x/it'\''s/$tosu'");
     }
 }

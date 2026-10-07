@@ -27,7 +27,10 @@ pub(crate) struct Fresh {
 pub(crate) struct Replays {
     seen: HashSet<String>,
     fresh: Vec<Fresh>,
-    seen_lazer: HashSet<PathBuf>,
+    // Data/r's mtime at the last full look
+    dir_stamp: Option<std::time::SystemTime>,
+    // path -> mtime
+    seen_lazer: HashMap<PathBuf, i64>,
     fresh_lazer: Vec<Fresh>,
     last_lazer_scan: i64,
     matching: bool,
@@ -58,30 +61,32 @@ fn mtime_ms(meta: &std::fs::Metadata) -> f64 {
 }
 
 fn scan_replay_dir(b: &Arc<Bridge>, initial: bool) {
-    let Ok(dir) = std::fs::read_dir(&b.env.replay_dir) else { return };
-    {
-        let mut s = b.st();
-        for entry in dir.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if s.replays.seen.contains(&name) {
-                continue;
-            }
-            let Some((md5, ended_at)) = osr::parse_replay_name(&name) else { continue };
-            s.replays.seen.insert(name.clone());
-            if initial {
-                continue;
-            }
-            // imported replays keep their old time
-            if (now_ms() - ended_at).abs() > REPLAY_WAIT_MS {
-                log!("ignore {name}: its time is not recent (an imported replay?)");
-                continue;
-            }
-            s.replays.fresh.push(Fresh { name, path: None, md5, at: ended_at, seen_at: now_ms() });
-        }
+    // a new file bumps the folder's mtime. a second one in the same tick wouldn't, so a fresh
+    // mtime gets looked at again
+    let Ok(stamp) = std::fs::metadata(&b.env.replay_dir).and_then(|m| m.modified()) else { return };
+    if b.st().replays.dir_stamp == Some(stamp) {
+        return;
     }
-    if !initial {
-        let b2 = b.clone();
-        b.spawn(async move { match_replays(&b2).await });
+    let Ok(dir) = std::fs::read_dir(&b.env.replay_dir) else { return };
+    let names: Vec<String> = dir.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    let settled = stamp.elapsed().is_ok_and(|d| d > Duration::from_secs(2));
+    let mut s = b.st();
+    s.replays.dir_stamp = settled.then_some(stamp);
+    for name in names {
+        if s.replays.seen.contains(&name) {
+            continue;
+        }
+        let Some((md5, ended_at)) = osr::parse_replay_name(&name) else { continue };
+        s.replays.seen.insert(name.clone());
+        if initial {
+            continue;
+        }
+        // imported replays keep their old time
+        if (now_ms() - ended_at).abs() > REPLAY_WAIT_MS {
+            log!("ignore {name}: its time is not recent (an imported replay?)");
+            continue;
+        }
+        s.replays.fresh.push(Fresh { name, path: None, md5, at: ended_at, seen_at: now_ms() });
     }
 }
 
@@ -94,11 +99,13 @@ pub(crate) fn watch_replay_dir(b: &Arc<Bridge>) {
         loop {
             tick.tick().await;
             scan_replay_dir(&b2, false);
+            let b3 = b2.clone();
+            b2.spawn(async move { match_replays(&b3).await });
         }
     });
 }
 
-fn scan_lazer_files(files: &Path, since: f64, seen: &HashSet<PathBuf>) -> Vec<Fresh> {
+fn scan_lazer_files(files: &Path, since: f64, seen: &HashMap<PathBuf, i64>) -> Vec<Fresh> {
     let mut found = vec![];
     let Ok(tops) = std::fs::read_dir(files) else { return found };
     for a in tops.flatten().filter(|a| a.file_name().len() == 1) {
@@ -112,7 +119,7 @@ fn scan_lazer_files(files: &Path, since: f64, seen: &HashSet<PathBuf>) -> Vec<Fr
             let Ok(names) = std::fs::read_dir(ab.path()) else { continue };
             for f in names.flatten() {
                 let file = f.path();
-                if seen.contains(&file) {
+                if seen.contains_key(&file) {
                     continue;
                 }
                 let Ok(fst) = f.metadata() else { continue };
@@ -168,35 +175,34 @@ pub(crate) async fn match_replays(b: &Arc<Bridge>) {
     };
 
     if let Some(since) = lazer_since {
-        let seen = b.st().replays.seen_lazer.clone();
-        let since = (since - REPLAY_TICK_TOLERANCE_MS) as f64;
-        let found = tokio::task::spawn_blocking(move || scan_lazer_files(&files, since, &seen)).await.unwrap_or_default();
+        let since = since - REPLAY_TICK_TOLERANCE_MS;
+        let seen = {
+            let mut s = b.st();
+            // the oldest waiting play only gets newer, so files from before it never come up again
+            s.replays.seen_lazer.retain(|_, at| *at >= since);
+            s.replays.seen_lazer.clone()
+        };
+        let found = tokio::task::spawn_blocking(move || scan_lazer_files(&files, since as f64, &seen)).await.unwrap_or_default();
         let mut s = b.st();
         for f in found {
-            s.replays.seen_lazer.insert(f.path.clone().unwrap());
+            s.replays.seen_lazer.insert(f.path.clone().unwrap(), f.at);
             if !f.md5.is_empty() {
                 s.replays.fresh_lazer.push(f);
             }
         }
     }
 
-    for item in waiting {
+    let mut matched: HashSet<&str> = HashSet::new();
+    for item in &waiting {
         let lazer = item.play.is_lazer();
         let file = {
             let mut s = b.st();
             let pool = if lazer { &mut s.replays.fresh_lazer } else { &mut s.replays.fresh };
-            // lazer's file has no time in its name, it just has to be written after the play
-            let idx = pool.iter().position(|f| {
-                f.md5 == item.play.beatmap_md5
-                    && if lazer {
-                        f.at >= item.detected_at_ms - REPLAY_TICK_TOLERANCE_MS
-                    } else {
-                        (f.at - item.detected_at_ms).abs() <= REPLAY_TICK_TOLERANCE_MS
-                    }
-            });
+            let idx = closest_replay(pool, item, waiting.iter().filter(|o| o.id != item.id && !matched.contains(o.id.as_str())));
             idx.map(|i| pool.remove(i))
         };
         if let Some(file) = file {
+            matched.insert(&item.id);
             if let Err(e) = attach_replay(b, &item.id, file).await {
                 queue::fail(b, &item.id, "failed", "replay_unreadable", &e);
             }
@@ -205,6 +211,28 @@ pub(crate) async fn match_replays(b: &Arc<Bridge>) {
         }
     }
     b.st().replays.matching = false;
+}
+
+fn could_be(f: &Fresh, item: &Item) -> bool {
+    f.md5 == item.play.beatmap_md5
+        && if item.play.is_lazer() {
+            // lazer's file has no time in its name, it just has to be written after the play
+            f.at >= item.detected_at_ms - REPLAY_TICK_TOLERANCE_MS
+        } else {
+            (f.at - item.detected_at_ms).abs() <= REPLAY_TICK_TOLERANCE_MS
+        }
+}
+
+// a quick retry of the same map has two plays and two files close together, each play takes the
+// nearest file that isn't nearer to another play
+fn closest_replay<'a>(pool: &[Fresh], item: &Item, others: impl Iterator<Item = &'a Item> + Clone) -> Option<usize> {
+    let gap = |f: &Fresh, i: &Item| (f.at - i.detected_at_ms).abs();
+    pool.iter()
+        .enumerate()
+        .filter(|(_, f)| could_be(f, item))
+        .filter(|(_, f)| !others.clone().any(|o| o.play.is_lazer() == item.play.is_lazer() && could_be(f, o) && gap(f, o) < gap(f, item)))
+        .min_by_key(|(_, f)| gap(f, item))
+        .map(|(i, _)| i)
 }
 
 async fn attach_replay(b: &Arc<Bridge>, id: &str, file: Fresh) -> Result<(), String> {
@@ -488,4 +516,36 @@ fn events_background(text: &str) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{closest_replay, Fresh};
+    use crate::types::Item;
+
+    const MD5: &str = "0123456789abcdef0123456789abcdef";
+
+    fn play(id: &str, at: i64) -> Item {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "capturedAt": "", "phase": "waiting_replay", "detectedAtMs": at, "play": { "beatmapMd5": MD5 },
+        }))
+        .unwrap()
+    }
+
+    fn file(at: i64) -> Fresh {
+        Fresh { name: format!("{MD5}-{at}.osr"), path: None, md5: MD5.into(), at, seen_at: 0 }
+    }
+
+    #[test]
+    fn retries_keep_their_own_replay() {
+        let (a, b) = (play("a", 100_000), play("b", 190_000));
+        // listed in the wrong order
+        let pool = [file(190_500), file(100_400)];
+        assert_eq!(closest_replay(&pool, &a, [&b].into_iter()), Some(1));
+        assert_eq!(closest_replay(&pool, &b, [&a].into_iter()), Some(0));
+        // only b's is there yet, a waits for its own
+        let pool = [file(190_500)];
+        assert_eq!(closest_replay(&pool, &a, [&b].into_iter()), None);
+        assert_eq!(closest_replay(&pool, &b, [&a].into_iter()), Some(0));
+    }
 }
