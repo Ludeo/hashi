@@ -38,9 +38,10 @@ which picks the right file for your system. Every release is also on this reposi
 
 ### Windows
 
-Open `Mania Bridge_x.y.z_x64-setup.exe`. It sets itself up in a few seconds without asking
+Open `ManiaBridge.exe`. It sets itself up in a few seconds without asking
 anything and then opens Mania Bridge. From then on it's in the Start menu and on your desktop. It
-only installs for your user, so it doesn't need admin rights.
+only installs for your user, so it doesn't need admin rights. Opening the setup file again later
+just opens the app, unless the setup is a newer version than the one you have.
 
 Windows may say "Windows protected your PC", because the installer isn't signed with a paid
 certificate. Click "More info", then "Run anyway". You only see this the first time, since updates
@@ -170,7 +171,8 @@ you, tosu is in there too. Deleting it signs the app out on
 this computer and forgets any plays that were still waiting.
 
 To uninstall, remove the app the usual way (Installed apps on Windows, your package manager, or
-deleting the AppImage), then delete that folder if you want your data gone as well.
+deleting the AppImage). On Windows it asks whether to delete your data too. On Linux, delete
+that folder if you want your data gone as well.
 
 ## License
 

@@ -1,6 +1,6 @@
 ; Mania Bridge's installer: tauri's own (tauri-bundler 2.10.1, the one in tauri-cli 2.12.1)
-; with two changes, marked "mania bridge:". it never asks anything: double-click, a progress
-; bar, and the app opens. updating tauri-cli means copying the new template and redoing them.
+; with changes marked "mania bridge:". it never asks or shows anything: double-click and the
+; app opens. updating tauri-cli means copying the new template and redoing them.
 
 Unicode true
 ManifestDPIAware true
@@ -479,8 +479,13 @@ FunctionEnd
   !include "{{this}}"
 {{/each}}
 
+Var WasSilent
 Function .onInit
-  ; mania bridge: always passive, no pages to click through. /P (the updater's) changes nothing
+  ; mania bridge: always silent. /P (the updater's) changes nothing
+  ${If} ${Silent}
+    StrCpy $WasSilent 1
+  ${EndIf}
+  SetSilent silent
   StrCpy $PassiveMode 1
 
   ${GetOptions} $CMDLINE "/NS" $NoShortcutMode
@@ -518,6 +523,20 @@ Function .onInit
     !endif
 
     Call RestorePreviousInstallLocation
+  ${EndIf}
+
+  ; mania bridge: with this version or a newer one installed, just open the app
+  ${If} $WasSilent <> 1
+  ${AndIf} ${FileExists} "$INSTDIR\${MAINBINARYNAME}.exe"
+    ReadRegStr $R0 SHCTX "${UNINSTKEY}" "DisplayVersion"
+    ${If} $R0 != ""
+      nsis_tauri_utils::SemverCompare "${VERSION}" $R0
+      Pop $R0
+      ${If} $R0 <> 1
+        nsis_tauri_utils::RunAsUser "$INSTDIR\${MAINBINARYNAME}.exe" ""
+        Quit
+      ${EndIf}
+    ${EndIf}
   ${EndIf}
 
 
@@ -744,8 +763,8 @@ Section Install
 SectionEnd
 
 Function .onInstSuccess
-  ; mania bridge: open the app once it's in. silent installs (/S) still only do it with /R
-  ${If} ${Silent}
+  ; mania bridge: open the app once it's in. installs run with /S still only do it with /R
+  ${If} $WasSilent = 1
     ${GetOptions} $CMDLINE "/R" $R0
     ${IfNot} ${Errors}
       ${GetOptions} $CMDLINE "/ARGS" $R0
@@ -778,6 +797,17 @@ Function un.onInit
   ${IfNot} ${Errors}
     StrCpy $UpdateMode 1
   ${EndIf}
+
+  ; mania bridge: one question instead of the wizard. /S and updates keep the data
+  ${IfNot} ${Silent}
+  ${AndIf} $UpdateMode <> 1
+    MessageBox MB_YESNOCANCEL|MB_ICONQUESTION|MB_DEFBUTTON2 "Also delete your ${PRODUCTNAME} data?$\r$\n$\r$\nThis signs you out and forgets your settings and any plays still waiting to be sent." IDYES delete_data IDNO keep_data
+    Quit
+    delete_data:
+      StrCpy $DeleteAppDataCheckboxState 1
+    keep_data:
+  ${EndIf}
+  SetSilent silent
 FunctionEnd
 
 Section Uninstall
@@ -888,6 +918,9 @@ Section Uninstall
     SetShellVarContext current
     RmDir /r "$APPDATA\${BUNDLEID}"
     RmDir /r "$LOCALAPPDATA\${BUNDLEID}"
+    ; mania bridge: the app's own data. not BRIDGE_DATA_DIR, that could point anywhere
+    RmDir /r "$APPDATA\mania-bridge"
+    RmDir /r "$APPDATA\mania-bridge-test"
   ${EndIf}
 
   !ifmacrodef NSIS_HOOK_POSTUNINSTALL

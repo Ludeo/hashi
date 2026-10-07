@@ -12,6 +12,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "aleju03",
     "category": "Game",
     "shortDescription": "Sends your osu!mania plays to Mania Tracker",
     "icon": [
@@ -24,7 +25,8 @@
     "createUpdaterArtifacts": true,
     "windows": {
       "nsis": {
-        "template": "windows/installer.nsi"
+        "template": "windows/installer.nsi",
+        "installerIcon": "icons/icon.ico"
       }
     }
   },

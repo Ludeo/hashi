@@ -18,6 +18,8 @@ jobs:
         include:
           - os: windows-latest
             bundles: nsis
+            # no space: github turns those into dots
+            assets: ManiaBridge[ext]
           # the oldest supported ubuntu, so the appimage runs on older systems too
           - os: ubuntu-22.04
             bundles: appimage,deb,rpm
@@ -53,6 +55,7 @@ jobs:
           # pinned: src-tauri/windows/installer.nsi is this version's template with changes
           tauriScript: npx --yes @tauri-apps/cli@2.12.1
           args: --bundles ${{ matrix.bundles }}
+          assetNamePattern: ${{ matrix.assets }}
           tagName: v__VERSION__
           releaseName: Mania Bridge v__VERSION__
           releaseBody: See the assets below to download and install this version.

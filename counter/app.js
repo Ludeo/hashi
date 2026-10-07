@@ -760,6 +760,7 @@ function home(c, host) {
 }
 
 const GEAR = `<path d="M4.10 0.39L5.90 0.39L6.07 1.88L7.16 2.51L8.55 1.92L9.44 3.47L8.24 4.37L8.24 5.63L9.44 6.53L8.55 8.08L7.16 7.49L6.07 8.12L5.90 9.61L4.10 9.61L3.93 8.12L2.84 7.49L1.45 8.08L0.56 6.53L1.76 5.63L1.76 4.37L0.56 3.47L1.45 1.92L2.84 2.51L3.93 1.88z" stroke-linejoin="round"/><circle cx="5" cy="5" r="1.4"/>`;
+const TRAY = `<path d="M1 1l6 6M7 3v4H3M.5 9.5h9"/>`;
 
 function render() {
   if (themeDraft) {
@@ -793,7 +794,7 @@ function render() {
   if (own || atHome) {
     app.append(el("div", { class: "corner" },
       atHome && el("button", { class: `gear${settingsOpen ? " on" : ""}`, title: "Settings", "aria-pressed": String(settingsOpen), onclick: toggleSettings }, icon(GEAR)),
-      own && snapshot.tray && el("button", { title: "Hide to tray", onclick: () => windowAction("hide") }, icon(`<path d="M0 5.5h10"/>`)),
+      own && snapshot.tray && el("button", { title: "Hide to tray", onclick: () => windowAction("hide") }, icon(TRAY)),
       own && el("button", { class: "close", title: "Quit", onclick: () => windowAction("close") }, icon(`<path d="m.5.5 9 9m0-9-9 9"/>`))));
   }
 
@@ -857,8 +858,7 @@ function showTitlebar() {
   },
     el("img", { src: "images/mania-tracker.png", alt: "", width: 16, height: 16 }),
     el("span", { class: "name" }, "Mania Bridge"),
-    el("button", { class: "tray", title: "Hide to tray", onclick: () => windowAction("hide") },
-      icon(`<path d="M5 .5v6M2.5 4 5 6.5 7.5 4M.5 9.5h9"/>`)),
+    el("button", { class: "tray", title: "Hide to tray", onclick: () => windowAction("hide") }, icon(TRAY)),
     el("button", { title: "Minimize", onclick: () => windowAction("minimize") }, icon(`<path d="M0 5.5h10"/>`)),
     el("button", { class: "close", title: "Close", onclick: () => windowAction("close") }, icon(`<path d="m.5.5 9 9m0-9-9 9"/>`)),
   );

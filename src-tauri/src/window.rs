@@ -111,6 +111,7 @@ fn build(app: &AppHandle, args: &Args, visible: bool) -> tauri::Result<()> {
         .visible(visible)
         .inner_size(480.0, 640.0)
         .min_inner_size(360.0, 400.0)
+        .center()
         .decorations(!cfg!(windows))
         // the theme's --osu-b5, no white flash before the page paints
         .background_color(backdrop(args.theme))
