@@ -18,8 +18,8 @@
     <circle cx="455" cy="290" r="150" fill="url(#coral)"/>
     <circle cx="100" cy="420" r="210" fill="url(#peach)"/>
     <circle cx="275" cy="470" r="190" fill="url(#sage)"/>
+    <circle cx="256" cy="200" r="150" fill="#e8506a" stroke="#fff" stroke-width="11"/>
     <g filter="url(#ink)" stroke="#fff" stroke-width="11" stroke-linejoin="round">
-      <circle cx="256" cy="200" r="150" fill="#e8506a"/>
       <path d="M201 146h57v-32l64 62-64 62v-32h-57z" fill="#fff"/>
       <g fill="#781c48">
         <rect x="56" y="396" width="34" height="62"/>
