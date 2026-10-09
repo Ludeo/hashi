@@ -428,6 +428,7 @@ pub(crate) fn image_type(file: &Path) -> Option<&'static str> {
     match file.extension()?.to_string_lossy().to_lowercase().as_str() {
         "jpg" | "jpeg" => Some("image/jpeg"),
         "png" => Some("image/png"),
+        "bmp" => Some("image/bmp"),
         _ => None,
     }
 }
@@ -437,6 +438,8 @@ pub(crate) fn sniff_image(bytes: &[u8]) -> Option<&'static str> {
         Some("image/png")
     } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
         Some("image/jpeg")
+    } else if bytes.starts_with(b"BM") {
+        Some("image/bmp")
     } else {
         None
     }
