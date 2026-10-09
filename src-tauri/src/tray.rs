@@ -34,7 +34,7 @@ mod imp {
         }
 
         fn title(&self) -> String {
-            "Mania Bridge".into()
+            "Hashi".into()
         }
 
         fn icon_pixmap(&self) -> Vec<ksni::Icon> {
@@ -50,7 +50,7 @@ mod imp {
         }
 
         fn tool_tip(&self) -> ksni::ToolTip {
-            ksni::ToolTip { title: "Mania Bridge".into(), ..Default::default() }
+            ksni::ToolTip { title: "Hashi".into(), ..Default::default() }
         }
 
         fn activate(&mut self, _x: i32, _y: i32) {
@@ -107,7 +107,7 @@ mod imp {
         .map_err(|e| e.to_string())?;
         let (data, width, height) = rgba(include_bytes!("../icons/32x32.png")).ok_or("bad icon")?;
         TrayIconBuilder::new()
-            .with_tooltip("Mania Bridge")
+            .with_tooltip("Hashi")
             .with_icon(Icon::from_rgba(data, width, height).map_err(|e| e.to_string())?)
             .with_menu(Box::new(menu))
             .with_menu_on_left_click(false)

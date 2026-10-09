@@ -146,7 +146,7 @@ function tosuDetail(tosu) {
 function blockedHint() {
   const { blocked } = snapshot.tosu;
   return blocked && el("div", { class: "blocked" },
-    el("p", {}, "Linux blocks tosu from reading the game. Run this once, then restart Mania Bridge:"),
+    el("p", {}, "Linux blocks tosu from reading the game. Run this once, then restart Hashi:"),
     el("code", { title: "Click to copy", onclick: (e) => {
       navigator.clipboard?.writeText(blocked.fix);
       e.currentTarget.classList.add("copied");
@@ -170,7 +170,7 @@ function getTosu() {
       el("button", { class: "key go", disabled: slow, onclick: get }, "Try again"));
   }
   return el("div", { class: "pinned" },
-    el("p", {}, "Couldn't find tosu on this computer. Mania Bridge can get it for you."),
+    el("p", {}, "Couldn't find tosu on this computer. Hashi can get it for you."),
     el("button", { class: "key go", disabled: slow, onclick: get }, "Get tosu"));
 }
 
@@ -611,7 +611,7 @@ function update() {
   if (u.step === "downloading" || u.step === "installing") {
     return el("div", { class: "pinned" },
       el("p", {}, u.step === "installing"
-        ? ["Installing ", version, ", Mania Bridge opens again in a moment."]
+        ? ["Installing ", version, ", Hashi opens again in a moment."]
         : ["Downloading ", version, u.percent != null ? ` · ${u.percent}%` : "", "…"]),
       el("i", { class: "spinner", style: `animation-delay: -${Date.now() % SPIN_MS}ms` }));
   }
@@ -622,7 +622,7 @@ function update() {
       el("button", { class: "link", disabled: slow, onclick: () => action("update/download") }, "Download"));
   }
   return el("div", { class: "pinned" },
-    el("p", {}, "Mania Bridge ", version, " is out."),
+    el("p", {}, "Hashi ", version, " is out."),
     el("button", { class: "key go", disabled: slow, onclick: getUpdate }, u.install ? "Update" : "Download"),
     el("button", { class: "link", disabled: slow, onclick: () => action("update/later") }, "Later"));
 }
@@ -685,9 +685,9 @@ function settings(c, host, reconnect) {
   const { launch } = snapshot.tosu;
   const tosuNote = tosuAutostartNote(t, launch);
   const computer = [
-    t != null && toggle("Open tosu with Mania Bridge", t, "tosu-autostart", tosuNote,
+    t != null && toggle("Open tosu with Hashi", t, "tosu-autostart", tosuNote,
       t && ["missing", "failed"].includes(launch) ? " is-error" : ""),
-    snapshot.autostart != null && toggle("Open Mania Bridge on startup", snapshot.autostart, "autostart"),
+    snapshot.autostart != null && toggle("Open Hashi on startup", snapshot.autostart, "autostart"),
     snapshot.startInTray != null && toggle("Start in the tray", snapshot.startInTray, "start-in-tray"),
   ].filter(Boolean);
   return el("div", { class: "settings" },
@@ -706,7 +706,7 @@ function settings(c, host, reconnect) {
         : el("button", { class: "key danger", disabled: slow, onclick: () => action("disconnect") }, "Disconnect")),
     computer.length > 0 && [el("p", { class: "group" }, "This computer"), ...computer],
     snapshot.theme && [el("p", { class: "group" }, "Look"), themeSetting()],
-    el("p", { class: "about" }, `Mania Bridge ${snapshot.version}`,
+    el("p", { class: "about" }, `Hashi ${snapshot.version}`,
       snapshot.update && !snapshot.update.step
         && [" · ", el("button", { class: "link", disabled: slow, onclick: getUpdate }, `${snapshot.update.install ? "Update to" : "Get"} ${snapshot.update.version}`)]));
 }
@@ -782,7 +782,7 @@ function home(c, host) {
     statusLine(c),
     reconnect && !settingsOpen
       && el("button", { class: "key go", disabled: slow, onclick: () => action("connect") }, "Connect again"),
-    helperDown && el("p", { class: "status warn" }, "Lost the bridge helper. Reconnecting."),
+    helperDown && el("p", { class: "status warn" }, "Lost Hashi's helper. Reconnecting."),
     settingsOpen
       ? settings(c, host, reconnect)
       : snapshot.plays.length
@@ -805,7 +805,7 @@ function render() {
   }
   app.replaceChildren();
   if (helperDown && !snapshot) {
-    app.append(el("div", { class: "connect full" }, el("p", { class: "note" }, "The bridge helper is not running.")));
+    app.append(el("div", { class: "connect full" }, el("p", { class: "note" }, "Hashi's helper is not running.")));
     return;
   }
   if (!snapshot) return;
@@ -870,7 +870,7 @@ function render() {
     el("div", { class: "river" }, river, full && riverbed())));
   wakeInk();
 
-  if (helperDown) app.append(el("p", { class: "status warn" }, "Lost the bridge helper. Reconnecting."));
+  if (helperDown) app.append(el("p", { class: "status warn" }, "Lost Hashi's helper. Reconnecting."));
   if (snapshot.plays.length) app.append(playList(snapshot.plays));
 }
 
@@ -893,7 +893,7 @@ function showTitlebar() {
     onmousedown: (e) => e.button === 0 && !e.target.closest("button") && windowAction("drag"),
   },
     el("img", { src: "images/mania-tracker.png", alt: "", width: 16, height: 16 }),
-    el("span", { class: "name" }, "Mania Bridge"),
+    el("span", { class: "name" }, "Hashi"),
     el("button", { class: "tray", title: "Hide to tray", onclick: () => windowAction("hide") }, icon(TRAY)),
     el("button", { title: "Minimize", onclick: () => windowAction("minimize") }, icon(`<path d="M0 5.5h10"/>`)),
     el("button", { class: "close", title: "Close", onclick: () => windowAction("close") }, icon(`<path d="m.5.5 9 9m0-9-9 9"/>`)),

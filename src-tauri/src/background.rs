@@ -62,7 +62,7 @@ pub fn run(args: &[String]) {
         Err(e) => {
             log!("{e}");
             #[cfg(windows)]
-            fatal(&format!("Mania Bridge couldn't start: {e}"));
+            fatal(&format!("Hashi couldn't start: {e}"));
             std::process::exit(1);
         }
     };
@@ -100,7 +100,7 @@ pub fn run(args: &[String]) {
 fn fatal(message: &str) {
     use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
     let wide = |s: &str| s.encode_utf16().chain([0]).collect::<Vec<u16>>();
-    let (text, title) = (wide(message), wide("Mania Bridge"));
+    let (text, title) = (wide(message), wide("Hashi"));
     // SAFETY: both are nul-terminated and outlive the call
     unsafe {
         MessageBoxW(std::ptr::null_mut(), text.as_ptr(), title.as_ptr(), MB_OK | MB_ICONERROR);

@@ -2,7 +2,7 @@
   <img src="src-tauri/icons/128x128.png" width="96" height="96" alt="">
 </p>
 
-<h1 align="center">Mania Bridge</h1>
+<h1 align="center">Hashi</h1>
 
 <p align="center">
   Sends your osu!mania plays to <a href="https://mania-tracker.com">Mania Tracker</a> as you play them.
@@ -10,7 +10,7 @@
 
 ---
 
-Mania Bridge is a small desktop app for Windows and Linux. You connect it to Mania Tracker once
+Hashi is a small desktop app for Windows and Linux. You connect it to Mania Tracker once
 and leave it open while you play. Every mania map you finish is then submitted to your profile
 along with its replay, on osu!stable and osu!lazer.
 
@@ -22,7 +22,7 @@ wasn't, why. New versions install from inside the app.
 ## What you need
 
 - Windows 10/11 or Linux (x86_64). macOS isn't supported.
-- [tosu](https://github.com/tosuapp/tosu), running while you play. Mania Bridge uses it to see when
+- [tosu](https://github.com/tosuapp/tosu), running while you play. Hashi uses it to see when
   you finish a play and which map it was on. If you don't have tosu, the app offers to download it
   for you, and from then on it starts tosu by itself.
 - To be logged in to Mania Tracker in your browser, since that's how you connect the app.
@@ -38,8 +38,8 @@ which picks the right file for your system. Every release is also on this reposi
 
 ### Windows
 
-Open `ManiaBridge.exe`. It sets itself up in a few seconds without asking
-anything and then opens Mania Bridge. From then on it's in the Start menu and on your desktop. It
+Open `Hashi.exe`. It sets itself up in a few seconds without asking
+anything and then opens Hashi. From then on it's in the Start menu and on your desktop. It
 only installs for your user, so it doesn't need admin rights. Opening the setup file again later
 just opens the app, unless the setup is a newer version than the one you have.
 
@@ -51,9 +51,9 @@ install from inside the app.
 
 | Package | How to install |
 |---|---|
-| AppImage (any distro) | `chmod +x "Mania Bridge_x.y.z_amd64.AppImage"`, then run it |
-| .deb (Debian, Ubuntu, Mint) | `sudo apt install "./Mania Bridge_x.y.z_amd64.deb"` |
-| .rpm (Fedora, openSUSE) | `sudo dnf install "./Mania Bridge-x.y.z-1.x86_64.rpm"` |
+| AppImage (any distro) | `chmod +x "Hashi_x.y.z_amd64.AppImage"`, then run it |
+| .deb (Debian, Ubuntu, Mint) | `sudo apt install "./Hashi_x.y.z_amd64.deb"` |
+| .rpm (Fedora, openSUSE) | `sudo dnf install "./Hashi-x.y.z-1.x86_64.rpm"` |
 
 All three update from inside the app. The .deb and .rpm ask for your password when installing an
 update.
@@ -63,7 +63,7 @@ the AppIndicator extension). Without one the app works the same, just without a 
 
 ## Getting started
 
-1. Open Mania Bridge and click "Connect to Mania Tracker".
+1. Open Hashi and click "Connect to Mania Tracker".
 2. Your browser opens Mania Tracker. Sign in if you need to, and approve the connection.
 3. Back in the app you'll see your name and avatar. Leave it open and play.
 
@@ -80,7 +80,7 @@ tray button instead. In the tray the window is closed completely and only the pa
 plays keeps running, so it takes very little memory.
 
 Plays you finish while the app isn't connected aren't sent later, so connect before you play. If
-you'd rather not think about it, turn on "Open Mania Bridge on startup" in the settings.
+you'd rather not think about it, turn on "Open Hashi on startup" in the settings.
 
 ## Settings
 
@@ -92,12 +92,12 @@ doing in osu! right now (in the menus, picking a song, playing or watching a rep
 map. With plays off, the maps you finish are left alone, and plays still waiting to be sent wait
 until you turn plays back on.
 
-"Open tosu with Mania Bridge" is off by default. With it on, the app starts tosu in the
+"Open tosu with Hashi" is off by default. With it on, the app starts tosu in the
 background when it opens and stops it again when it closes. Getting tosu through the app turns
 this on for you. It looks for tosu in the usual places. If yours is somewhere else, set the
 `TOSU_PATH` environment variable to the full path of the tosu program.
 
-"Open Mania Bridge on startup" is off by default. With it on, the app starts with your
+"Open Hashi on startup" is off by default. With it on, the app starts with your
 computer and goes straight to the tray, so it's already running when you play.
 
 "Start in the tray" is off by default. With it on, opening the app only puts its icon in the tray.
@@ -114,7 +114,7 @@ The app checks for a new version when it starts and every few hours after that. 
 a note at the top says so. Clicking "Update" downloads and installs it, and the app opens again on
 the new version. "Later" hides the note until you next start the app.
 
-Updates are signed, and the app only installs files signed with Mania Bridge's release key. Even
+Updates are signed, and the app only installs files signed with Hashi's release key. Even
 someone who broke into the update server couldn't get it to install anything else.
 
 ## What gets sent
@@ -140,7 +140,7 @@ The app shows the exact command that allows it, which looks like this:
 sudo setcap cap_sys_ptrace=eip /path/to/tosu
 ```
 
-Run it once, then restart tosu (or Mania Bridge, if it starts tosu for you). You'll need to run it
+Run it once, then restart tosu (or Hashi, if it starts tosu for you). You'll need to run it
 again after updating tosu.
 
 ### A play doesn't show up

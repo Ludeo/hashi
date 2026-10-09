@@ -107,7 +107,7 @@ fn report_place(w: &WebviewWindow) {
 
 fn build(app: &AppHandle, args: &Args, visible: bool) -> tauri::Result<()> {
     let mut window = WebviewWindowBuilder::new(app, MAIN, WebviewUrl::External(args.url.parse().expect("counter url")))
-        .title("Mania Bridge")
+        .title("Hashi")
         .visible(visible)
         .inner_size(480.0, 640.0)
         .min_inner_size(360.0, 400.0)
@@ -132,7 +132,7 @@ fn build(app: &AppHandle, args: &Args, visible: bool) -> tauri::Result<()> {
 // the main window loads hidden behind it and comes up once the animation is done
 fn opening(app: &AppHandle, url: &str) {
     let splash = WebviewWindowBuilder::new(app, OPENING, WebviewUrl::External(format!("{url}?opening").parse().expect("counter url")))
-        .title("Mania Bridge")
+        .title("Hashi")
         .inner_size(200.0, 200.0)
         .resizable(false)
         .decorations(false)

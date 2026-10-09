@@ -106,7 +106,7 @@ pub(crate) fn watch_updates(b: &Arc<Bridge>) {
                     };
                     if changed {
                         if let Some(v) = newer {
-                            log!("update: Mania Bridge {v} is out");
+                            log!("update: Hashi {v} is out");
                         }
                         b2.broadcast();
                     }

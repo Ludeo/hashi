@@ -50,7 +50,7 @@ mod imp {
         let program = super::program()?;
         let program = program.to_str().ok_or("the app's path isn't valid text")?;
         Ok(format!(
-            "[Desktop Entry]\nType=Application\nName=Mania Bridge\nComment=Sends your osu!mania plays to Mania Tracker\nExec={} {}\nTerminal=false\nX-GNOME-Autostart-enabled=true\n",
+            "[Desktop Entry]\nType=Application\nName=Hashi\nComment=Sends your osu!mania plays to Mania Tracker\nExec={} {}\nTerminal=false\nX-GNOME-Autostart-enabled=true\n",
             quote(program),
             super::HIDDEN
         ))
@@ -87,7 +87,7 @@ mod imp {
     mod tests {
         #[test]
         fn quoting() {
-            assert_eq!(super::quote("/home/a/Mania Bridge_0.1.0_amd64.AppImage"), "\"/home/a/Mania Bridge_0.1.0_amd64.AppImage\"");
+            assert_eq!(super::quote("/home/a/My Apps/Hashi_0.1.0_amd64.AppImage"), "\"/home/a/My Apps/Hashi_0.1.0_amd64.AppImage\"");
             assert_eq!(super::quote("/x/100%/$y"), "\"/x/100%%/\\\\$y\"");
         }
     }
@@ -98,7 +98,7 @@ mod imp {
     const RUN: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
     // where task manager's startup tab keeps what it turned off
     const APPROVED: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
-    const NAME: &str = "Mania Bridge";
+    const NAME: &str = "Hashi";
 
     fn command() -> Result<String, String> {
         Ok(format!("\"{}\" {}", super::program()?.display(), super::HIDDEN))

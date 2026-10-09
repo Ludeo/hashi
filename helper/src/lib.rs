@@ -25,7 +25,7 @@ use tokio::sync::broadcast;
 use types::{Config, Queue};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-const APP_NAME: &str = "Mania Bridge";
+const APP_NAME: &str = "Hashi";
 const CLIENT_ID: &str = "mania-bridge";
 const CALLBACK_PATH: &str = "/mania-bridge/callback";
 // sites from before /bridge/authorize only take this one

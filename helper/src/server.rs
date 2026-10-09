@@ -44,7 +44,7 @@ fn saved(b: &Bridge, ok: bool) -> Response<Body> {
     if ok {
         json(200, &b.snapshot())
     } else {
-        json(500, &serde_json::json!({ "error": "Couldn't save that. It works until Mania Bridge closes, check that its settings folder can be written to." }))
+        json(500, &serde_json::json!({ "error": "Couldn't save that. It works until Hashi closes, check that its settings folder can be written to." }))
     }
 }
 

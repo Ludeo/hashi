@@ -1,5 +1,5 @@
-; Mania Bridge's installer: tauri's own (tauri-bundler 2.10.1, the one in tauri-cli 2.12.1)
-; with changes marked "mania bridge:". it never asks or shows anything: double-click and the
+; Hashi's installer: tauri's own (tauri-bundler 2.10.1, the one in tauri-cli 2.12.1)
+; with changes marked "hashi:". it never asks or shows anything: double-click and the
 ; app opens. updating tauri-cli means copying the new template and redoing them.
 
 Unicode true
@@ -481,7 +481,7 @@ FunctionEnd
 
 Var WasSilent
 Function .onInit
-  ; mania bridge: always silent. /P (the updater's) changes nothing
+  ; hashi: always silent. /P (the updater's) changes nothing
   ${If} ${Silent}
     StrCpy $WasSilent 1
   ${EndIf}
@@ -525,7 +525,7 @@ Function .onInit
     Call RestorePreviousInstallLocation
   ${EndIf}
 
-  ; mania bridge: with this version or a newer one installed, just open the app
+  ; hashi: with this version or a newer one installed, just open the app
   ${If} $WasSilent <> 1
   ${AndIf} ${FileExists} "$INSTDIR\${MAINBINARYNAME}.exe"
     ReadRegStr $R0 SHCTX "${UNINSTKEY}" "DisplayVersion"
@@ -763,7 +763,7 @@ Section Install
 SectionEnd
 
 Function .onInstSuccess
-  ; mania bridge: open the app once it's in. installs run with /S still only do it with /R
+  ; hashi: open the app once it's in. installs run with /S still only do it with /R
   ${If} $WasSilent = 1
     ${GetOptions} $CMDLINE "/R" $R0
     ${IfNot} ${Errors}
@@ -798,7 +798,7 @@ Function un.onInit
     StrCpy $UpdateMode 1
   ${EndIf}
 
-  ; mania bridge: one question instead of the wizard. /S and updates keep the data
+  ; hashi: one question instead of the wizard. /S and updates keep the data
   ${IfNot} ${Silent}
   ${AndIf} $UpdateMode <> 1
     MessageBox MB_YESNOCANCEL|MB_ICONQUESTION|MB_DEFBUTTON2 "Also delete your ${PRODUCTNAME} data?$\r$\n$\r$\nThis signs you out and forgets your settings and any plays still waiting to be sent." IDYES delete_data IDNO keep_data
@@ -918,7 +918,7 @@ Section Uninstall
     SetShellVarContext current
     RmDir /r "$APPDATA\${BUNDLEID}"
     RmDir /r "$LOCALAPPDATA\${BUNDLEID}"
-    ; mania bridge: the app's own data. not BRIDGE_DATA_DIR, that could point anywhere
+    ; hashi: the app's own data. not BRIDGE_DATA_DIR, that could point anywhere
     RmDir /r "$APPDATA\mania-bridge"
     RmDir /r "$APPDATA\mania-bridge-test"
   ${EndIf}

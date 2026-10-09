@@ -1,6 +1,6 @@
 [package]
 name = "mania-bridge"
-description = "Mania Bridge"
+description = "Hashi"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
