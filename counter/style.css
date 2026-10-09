@@ -575,7 +575,11 @@ button.link {
 .play:nth-child(3n + 2) { --wobble: url(#ink2); }
 .play:nth-child(3n) { --wobble: url(#ink3); }
 .play + .play::before { top: -5px; }
-.plays .earlier { padding: 14px 4px 6px; color: var(--osu-b1); font-size: 13px; text-align: center; }
+.pager { position: relative; display: flex; align-items: center; justify-content: space-between; padding: 14px 4px 6px; font-size: 12px; color: var(--osu-b1); }
+.pager::before { content: ""; position: absolute; top: -5px; left: 0; right: 0; height: 10px; background: var(--rule); filter: url(#ink2); }
+.pager .link { color: var(--osu-f1); }
+.pager .link:hover:not(:disabled) { color: #fff; }
+.pager .link:disabled { opacity: 0.35; text-decoration: none; cursor: default; }
 
 .play .cover { position: relative; flex-shrink: 0; width: 72px; height: 50px; border-radius: 8px; background: var(--osu-b4); }
 .play .cover::before {

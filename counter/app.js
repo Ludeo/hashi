@@ -65,17 +65,21 @@ const MOD_FILES = {
   HD: "hidden", HR: "hard-rock", DT: "double-time", FL: "flashlight", EZ: "easy", NF: "no-fail",
   HT: "half-time", NC: "nightcore", SD: "sudden-death", PF: "perfect", FI: "fade-in", RD: "random",
   MR: "mirror", SV2: "score-v2", TD: "touch-device", CN: "cinema", CO: "cover", DS: "dual-stages",
+  AT: "autoplay", DC: "daycore", NR: "no-release", AC: "accuracy-challenge", IN: "invert", HO: "hold-off",
+  CS: "constant-speed", CL: "classic", DA: "difficulty-adjust", WU: "wind-up", WD: "wind-down",
+  MU: "muted", AS: "adaptive-speed",
   "1K": "one-key", "2K": "two-keys", "3K": "three-keys", "4K": "four-keys", "5K": "five-keys",
   "6K": "six-keys", "7K": "seven-keys", "8K": "eight-keys", "9K": "nine-keys", "10K": "ten-keys",
 };
 const MOD_COLORS = {
-  red: ["HD", "HR", "DT", "FL", "NC", "SD", "PF", "FI", "CO"],
-  lime: ["EZ", "NF", "HT"],
-  purple: ["MR", "RD", "DS", "1K", "2K", "3K", "4K", "5K", "6K", "7K", "8K", "9K", "10K"],
+  red: ["HD", "HR", "DT", "FL", "NC", "SD", "PF", "FI", "CO", "AC"],
+  lime: ["EZ", "NF", "HT", "DC", "NR"],
+  purple: ["MR", "RD", "DS", "IN", "HO", "CS", "CL", "DA", "1K", "2K", "3K", "4K", "5K", "6K", "7K", "8K", "9K", "10K"],
   blue: ["CN", "AT", "RX", "AP"],
+  pink: ["WU", "WD", "MU", "AS"],
   yellow: ["TD", "SV2"],
 };
-const COLOR = { red: "#ff6666", lime: "#b2ff66", purple: "#8c66ff", blue: "#66ccff", yellow: "#ffcc22" };
+const COLOR = { red: "#ff6666", lime: "#b2ff66", purple: "#8c66ff", blue: "#66ccff", pink: "#ff66ab", yellow: "#ffcc22" };
 const modColor = (mod) => COLOR[Object.keys(MOD_COLORS).find((c) => MOD_COLORS[c].includes(mod))] ?? COLOR.red;
 
 // tosu gives "HDNC", "4KMR" etc
@@ -427,7 +431,6 @@ function playRow(p) {
       p.play.artist && el("span", { class: "artist" }, p.play.artist),
       el("div", { class: "facts" },
         diff && el("span", {}, diff),
-        p.play.client === "lazer" && el("span", {}, "lazer"),
         mods.length > 0 && el("span", { class: "mods" }, mods.map(modBadge)),
         acc && el("span", {}, acc)),
       (status.detail || removable) && el("span", { class: "detail" }, status.detail && el("span", {}, status.detail),
@@ -458,16 +461,46 @@ function rating(r) {
     }, danName(r.dan)));
 }
 
-const SHOWN = 50;
+// a page of plays sized to the window, so a long session doesn't turn into a long scroll
+const ROW_PX = 90;
+const PAGER_PX = 40;
+let perPage = 5;
+let page = 0;
+
+function turnPage(by) {
+  page += by;
+  render();
+}
+
 function playList(plays) {
-  const shown = plays.filter((p, i) => i < SHOWN || ["spin", "wait"].includes(playStatus(p).kind));
-  const rest = plays.length - shown.length;
-  const ids = new Set(shown.map((p) => p.id));
+  const pages = Math.ceil(plays.length / perPage);
+  page = Math.max(0, Math.min(page, pages - 1));
+  const from = page * perPage;
+  const shown = plays.slice(from, from + perPage);
+  // kept for every play, not just this page, so flipping back doesn't fade the covers in again
+  const ids = new Set(plays.map((p) => p.id));
   for (const cache of [covers, stamped, stampAt]) {
     for (const id of cache.keys()) if (!ids.has(id)) cache.delete(id);
   }
-  return el("ul", { class: "plays" }, shown.map(playRow),
-    rest > 0 && el("li", { class: "earlier" }, `and ${rest} earlier ${rest === 1 ? "play" : "plays"}`));
+  return el("div", { class: "history" },
+    el("ul", { class: "plays" }, shown.map(playRow)),
+    pages > 1 && el("div", { class: "pager" },
+      el("button", { class: "link", disabled: page === 0, onclick: () => turnPage(-1) }, "Newer"),
+      el("span", {}, `${from + 1}–${from + shown.length} of ${plays.length}`),
+      el("button", { class: "link", disabled: page === pages - 1, onclick: () => turnPage(1) }, "Older")));
+}
+
+function fitPage() {
+  const list = document.querySelector(".home .plays");
+  const shore = document.querySelector(".shore");
+  if (!list || !shore) return;
+  const scroller = document.documentElement.classList.contains("framed") ? app : document.scrollingElement;
+  const top = list.getBoundingClientRect().top + scroller.scrollTop;
+  const fit = Math.max(3, Math.floor((innerHeight - top - PAGER_PX - shore.offsetHeight) / ROW_PX));
+  if (fit === perPage) return;
+  page = Math.floor(page * perPage / fit);
+  perPage = fit;
+  render();
 }
 
 const PRESENCE_NOTES = {
@@ -801,6 +834,7 @@ function render() {
 
   if (atHome) {
     app.append(el("div", { class: "ground" }, home(c, host), shore()));
+    fitPage();
     return;
   }
 
