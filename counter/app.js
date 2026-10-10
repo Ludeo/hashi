@@ -88,12 +88,20 @@ function modList(name) {
   return mods.filter((m) => !(m === "DT" && mods.includes("NC")) && !(m === "SD" && mods.includes("PF")));
 }
 
-function modBadge(mod) {
+// the speed lazer's speed mods play at unless it's set to a custom one, which goes on the badge like lazer does
+const DEFAULT_RATES = { DT: 1.5, NC: 1.5, HT: 0.75, DC: 0.75 };
+
+// an object, not a bare rate, so .map(modBadge) can't pass the index as one
+function modBadge(mod, { rate } = {}) {
   const file = MOD_FILES[mod];
-  return el("span", { class: "mod", title: mod, style: `--mod: ${modColor(mod)}` },
+  const custom = mod in DEFAULT_RATES && typeof rate === "number" && Math.abs(rate - DEFAULT_RATES[mod]) > 0.001;
+  const tail = custom && `${rate.toFixed(2)}×`;
+  const badge = el("span", { class: "mod", title: tail ? null : mod, style: `--mod: ${modColor(mod)}` },
     file
       ? el("i", { style: `-webkit-mask-image: url("images/mods/mod-${file}.svg"); mask-image: url("images/mods/mod-${file}.svg")` })
       : el("b", {}, mod));
+  if (!tail) return badge;
+  return el("span", { class: "mod-rated", title: `${mod} ${tail}`, style: `--mod: ${modColor(mod)}` }, badge, el("span", { class: "tail" }, tail));
 }
 
 function cover(p) {
@@ -533,9 +541,9 @@ function playList(plays) {
   return el("div", { class: "history" },
     el("ul", { class: "plays" }, shown.map(playRow)),
     pages > 1 && el("div", { class: "pager" },
-      el("button", { class: "link", disabled: page === 0, onclick: () => turnPage(-1) }, "Newer"),
+      el("button", { class: "link", disabled: page === 0, onclick: () => turnPage(-1) }, "Previous"),
       el("span", {}, `${from + 1}–${from + shown.length} of ${plays.length}`),
-      el("button", { class: "link", disabled: page === pages - 1, onclick: () => turnPage(1) }, "Older")));
+      el("button", { class: "link", disabled: page === pages - 1, onclick: () => turnPage(1) }, "Next")));
 }
 
 function fitPage() {
@@ -548,7 +556,6 @@ function fitPage() {
     const mine = list.querySelector(".mine");
     const fit = Math.max(5, Math.floor((room - (mine ? mine.offsetHeight + parseFloat(getComputedStyle(mine).marginTop) : 0)) / STANDING_PX));
     if (fit === board.perPage) return;
-    board.page = Math.floor(board.page * board.perPage / fit);
     board.perPage = fit;
     return render();
   }
@@ -573,13 +580,13 @@ function modVariant(mods) {
   return { speed: has("HT", "DC") ? "ht" : has("DT", "NC") ? "dt" : null, mods: ["HO", "IN", "NR"].filter((m) => has(m)) };
 }
 
-// mine: open on the page with your own row
+// mine: open on the page with your own row. from: the first row shown, the wheel moves it a row at a time
 function openBoard(map, follow = false, mine = false, variant = map) {
   settingsOpen = false;
   clearTimeout(boardTimer);
   board = {
     map, follow, mine, md5: map.md5, speed: variant.speed ?? null, mods: variant.mods ?? [],
-    data: null, error: null, page: 0, perPage: board?.perPage ?? 8, seen: acceptedOn(map.md5),
+    data: null, error: null, from: 0, wheel: 0, perPage: board?.perPage ?? 8, seen: acceptedOn(map.md5),
   };
   loadBoard();
   render();
@@ -630,7 +637,7 @@ function boardChanged() {
     board.speed = selected.speed ?? null;
     board.mods = selected.mods ?? [];
     board.data = board.error = null;
-    board.page = 0;
+    board.from = 0;
     board.seen = acceptedOn(selected.md5);
     // whatever is on its way is for the map before
     board.asked = (board.asked ?? 0) + 1;
@@ -672,8 +679,7 @@ function standing(e, mine) {
       title: `Open ${e.username}'s profile on Mania Tracker`,
     }, e.username),
     e.app === "mania-bridge" && el("img", { class: "app", src: "images/app.svg", alt: "", title: "Sent with Hashi" }),
-    el("span", { class: "mods" }, e.mods.filter((m) => m !== "CL").map(modBadge)),
-    board.speed && el("span", { class: "rate" }, typeof e.rate === "number" ? `${+e.rate.toFixed(2)}x` : ""),
+    el("span", { class: "mods" }, e.mods.filter((m) => m !== "CL").map((m) => modBadge(m, { rate: e.rate }))),
     el("span", { class: "acc" }, typeof e.accuracy === "number" ? `${e.accuracy.toFixed(2)}%` : ""),
     el("span", { class: "when", title: e.playedAt ? new Date(e.playedAt).toLocaleString() : null }, e.playedAt ? ago(e.playedAt) : ""));
 }
@@ -710,26 +716,39 @@ function boardView() {
   } else if (!data.entries.length) {
     body = el("p", { class: "lead" }, "Nobody has played this map yet.");
   } else {
-    const pages = Math.ceil(data.entries.length / board.perPage);
-    // kept until the page is turned, the page size can still change once it's drawn
+    const last = Math.max(0, data.entries.length - board.perPage);
+    // kept until the list moves, the page size can still change once it's drawn
     const at = board.mine ? data.entries.findIndex((e) => e.username === snapshot.connection.username) : -1;
-    if (at >= 0) board.page = Math.floor(at / board.perPage);
-    board.page = Math.max(0, Math.min(board.page, pages - 1));
-    const from = board.page * board.perPage;
+    if (at >= 0) board.from = Math.floor(at / board.perPage) * board.perPage;
+    board.from = Math.max(0, Math.min(board.from, last));
+    const from = board.from;
     const shown = data.entries.slice(from, from + board.perPage);
-    const turn = (by) => () => {
-      board.page += by;
+    const move = (by) => {
+      const to = Math.max(0, Math.min(board.from + by, last));
+      if (to === board.from) return;
+      board.from = to;
       board.mine = false;
       render();
     };
+    // a row per row's height of wheel, so a trackpad's small steps add up
+    const wheel = (e) => {
+      if (!e.deltaY) return;
+      if (Math.sign(e.deltaY) !== Math.sign(board.wheel)) board.wheel = 0;
+      board.wheel += e.deltaY;
+      const rows = Math.trunc(board.wheel / STANDING_PX);
+      board.wheel -= rows * STANDING_PX;
+      // past either end the window scrolls as usual
+      if (e.deltaY < 0 ? from > 0 : from < last) e.preventDefault();
+      move(rows);
+    };
     body = el("div", { class: "history" },
-      el("ol", { class: "standings" },
+      el("ol", { class: "standings", onwheel: wheel },
         shown.map((e) => standing(e)),
         data.self && standing(data.self, true)),
       el("div", { class: "pager" },
-        el("button", { class: "link", disabled: board.page === 0, onclick: turn(-1) }, "Previous"),
+        el("button", { class: "link", disabled: from === 0, onclick: () => move(-board.perPage) }, "Previous"),
         el("span", {}, `${from + 1}–${from + shown.length} of ${data.entries.length}`),
-        el("button", { class: "link", disabled: board.page >= pages - 1, onclick: turn(1) }, "Next")));
+        el("button", { class: "link", disabled: from >= last, onclick: () => move(board.perPage) }, "Next")));
   }
   return el("div", { class: "board" }, head, about, body);
 }
@@ -1147,7 +1166,7 @@ function showTitlebar() {
     class: "titlebar",
     onmousedown: (e) => e.button === 0 && !e.target.closest("button") && windowAction("drag"),
   },
-    el("img", { src: "images/mania-tracker.png", alt: "", width: 16, height: 16 }),
+    el("img", { src: "images/app.svg", alt: "", width: 16, height: 16 }),
     el("span", { class: "name" }, "Hashi"),
     el("button", { class: "tray", title: "Hide to tray", onclick: () => windowAction("hide") }, icon(TRAY)),
     el("button", { title: "Minimize", onclick: () => windowAction("minimize") }, icon(`<path d="M0 5.5h10"/>`)),

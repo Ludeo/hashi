@@ -682,6 +682,25 @@ a.title:hover, a.title:focus-visible, .who .name .profile:hover, .who .name .pro
   mask-repeat: no-repeat;
 }
 .mod b { font-size: 9px; line-height: 1; color: color-mix(in srgb-linear, black, var(--mod) 10%); }
+/* a custom speed in a darker tail, the site's ModBadge after osu-web's .mod__extender */
+.mod-rated { display: inline-flex; align-items: center; flex-shrink: 0; }
+.mod-rated .tail {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 19px;
+  margin-left: -10px;
+  padding: 0 2px 1px 10px;
+  background: color-mix(in srgb, black, var(--mod) 26.3%);
+  -webkit-mask: url("images/mods/mod-icon-extender.svg") center / contain no-repeat;
+  mask: url("images/mods/mod-icon-extender.svg") center / contain no-repeat;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--mod);
+}
 
 .play .side { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex-shrink: 0; }
 .play .when { font-size: 11px; color: var(--osu-f1); }
@@ -801,7 +820,6 @@ a.title:hover, a.title:focus-visible, .who .name .profile:hover, .who .name .pro
 .standing .when { width: 52px; flex-shrink: 0; font-size: 11px; color: var(--osu-f1); text-align: right; }
 .board .map .facts { margin-top: 3px; }
 .board .map .players { font-weight: 500; color: var(--osu-f1); }
-.standing .rate { width: 40px; flex-shrink: 0; font-size: 12px; font-weight: 600; color: var(--osu-f1); text-align: right; }
 @media (max-width: 420px) {
   .standing .when { display: none; }
 }
