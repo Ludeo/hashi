@@ -204,10 +204,16 @@ async fn pump_due(b: &Arc<Bridge>) {
                 None
             }
         };
-        if let Some(slot) = b.st().queue.get_mut(&item.id) {
-            // held while it was being sent: that holds until it's completed
-            item.on_hold = slot.on_hold && item.phase == "send";
-            *slot = item;
+        {
+            let mut s = b.st();
+            if item.phase == "done" {
+                s.boards.forget(&item.play.beatmap_md5);
+            }
+            if let Some(slot) = s.queue.get_mut(&item.id) {
+                // held while it was being sent: that holds until it's completed
+                item.on_hold = slot.on_hold && item.phase == "send";
+                *slot = item;
+            }
         }
         if let Some((status, message)) = problem {
             auth::set_connection(b, status, Some(message));
@@ -543,6 +549,8 @@ pub(crate) fn public_item(item: &Item, origin: &str, username: Option<&str>) -> 
         "error": item.error,
         "url": r.and_then(|r| play_url(r, origin, username)),
         "rating": r.map(rating).unwrap_or(Value::Null),
+        "md5": item.play.beatmap_md5,
+        "rank": r.filter(|r| state_of(r) == "accepted").map(crate::leaderboard::rank).unwrap_or(Value::Null),
     })
 }
 

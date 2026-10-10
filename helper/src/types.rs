@@ -60,6 +60,9 @@ pub struct Settings {
     // only the live status, finished plays aren't sent
     #[serde(default, rename = "presenceOnly")]
     pub presence_only: bool,
+    // dans are rough, some would rather not see them
+    #[serde(default, rename = "hideDans", skip_serializing_if = "std::ops::Not::not")]
+    pub hide_dans: bool,
     // the site's theme color: hue 0-359, saturation 0-100. unset is the default pink
     #[serde(default, rename = "themeHue", skip_serializing_if = "Option::is_none")]
     pub theme_hue: Option<u16>,

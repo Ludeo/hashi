@@ -135,7 +135,7 @@ fn split_mods(name: &str) -> Vec<String> {
     out
 }
 
-fn mod_acronyms(mods: &Value) -> Vec<String> {
+pub(crate) fn mod_acronyms(mods: &Value) -> Vec<String> {
     let list: Vec<String> = match mods.get("array").and_then(Value::as_array).filter(|a| !a.is_empty()) {
         Some(a) => a.iter().filter_map(|m| m.as_str().or_else(|| m.get("acronym").and_then(Value::as_str)).map(String::from)).collect(),
         None => split_mods(&crate::tosu::mods_name(mods)),

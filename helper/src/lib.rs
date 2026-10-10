@@ -1,6 +1,7 @@
 mod auth;
 mod autostart;
 mod get_tosu;
+mod leaderboard;
 mod osr;
 mod presence;
 mod queue;
@@ -278,6 +279,7 @@ pub(crate) struct State {
     pub chart_index: Option<HashMap<String, replays::ChartEntry>>,
     pub pump: queue::PumpState,
     pub presence: presence::PresenceState,
+    pub boards: leaderboard::Boards,
     pub update: update::UpdateState,
     pub get_tosu: get_tosu::GetState,
     pub autostart: Option<bool>,
@@ -361,6 +363,7 @@ impl Bridge {
             "tosuAutostart": self.env.tosu_can_start.then(|| s.config.settings.as_ref().is_some_and(|x| x.tosu_autostart)),
             "startInTray": self.opts.tray.then(|| s.config.settings.as_ref().is_some_and(|x| x.start_in_tray)),
             "sendPlays": !s.sends_no_plays(),
+            "showDans": !s.config.settings.as_ref().is_some_and(|x| x.hide_dans),
             "plays": items.into_iter().map(|i| queue::public_item(i, &self.env.origin, profile.as_deref())).collect::<Vec<_>>(),
         })
     }
@@ -394,6 +397,13 @@ impl Bridge {
         if on {
             queue::wake_queue(self, 0);
         }
+        saved
+    }
+
+    pub(crate) async fn set_show_dans(self: &Arc<Self>, on: bool) -> bool {
+        self.st().config.settings.get_or_insert_with(Default::default).hide_dans = !on;
+        let saved = self.save_config().await;
+        self.broadcast();
         saved
     }
 
@@ -610,6 +620,7 @@ pub async fn start(opts: Options) -> Result<Arc<Bridge>, String> {
             chart_index: None,
             pump: queue::PumpState::default(),
             presence: presence::PresenceState::default(),
+            boards: Default::default(),
             update: update::UpdateState::default(),
             get_tosu: get_tosu::GetState::default(),
             autostart: None,
@@ -748,6 +759,7 @@ pub(crate) mod tests {
             chart_index: None,
             pump: Default::default(),
             presence: Default::default(),
+            boards: Default::default(),
             update: Default::default(),
             get_tosu: Default::default(),
             autostart: None,

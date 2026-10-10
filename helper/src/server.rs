@@ -10,7 +10,7 @@ use bytes::Bytes;
 use tokio::sync::{broadcast, oneshot};
 
 use crate::auth::{self, Attempt};
-use crate::{autostart, get_tosu, log, presence, queue, replays, tosu, update, Bridge, COUNTER_PATH, DEFAULT_PORT};
+use crate::{autostart, get_tosu, leaderboard, log, presence, queue, replays, tosu, update, Bridge, COUNTER_PATH, DEFAULT_PORT};
 
 // built in for releases, read from disk in debug builds so edits show up right away
 #[derive(rust_embed::Embed)]
@@ -147,6 +147,16 @@ async fn route(b: &Arc<Bridge>, req: Request, has_origin: bool) -> Response<Body
                 .body(Body::from(bytes))
                 .unwrap();
         }
+        if let Some(md5) = path.strip_prefix("/leaderboard/") {
+            if !leaderboard::valid_md5(md5) {
+                return empty(404);
+            }
+            let Some((speed, mods)) = leaderboard::parse_variant(req.uri().query().unwrap_or("")) else { return empty(400) };
+            let (status, body) = leaderboard::board(b, md5, speed, mods).await;
+            let mut res = json(status, &body);
+            res.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+            return res;
+        }
         if path == "/state" {
             let mut res = json(200, &b.snapshot());
             res.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
@@ -196,6 +206,10 @@ async fn route(b: &Arc<Bridge>, req: Request, has_origin: bool) -> Response<Body
             let plays_saved = b.set_send_plays(plays).await;
             let live_saved = presence::set_presence_setting(b, live).await;
             return saved(b, plays_saved && live_saved);
+        }
+        if path == "/show-dans/on" || path == "/show-dans/off" {
+            let ok = b.set_show_dans(path == "/show-dans/on").await;
+            return saved(b, ok);
         }
         if path == "/start-in-tray/on" || path == "/start-in-tray/off" {
             let ok = b.set_start_in_tray(path == "/start-in-tray/on").await;

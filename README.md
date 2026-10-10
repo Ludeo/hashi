@@ -71,6 +71,15 @@ When you finish a mania map it appears at the top of the list. It shows "Waiting
 osu! has saved the replay, and gets its stamp once Mania Tracker has checked it. Click a submitted
 play to see it on Mania Tracker.
 
+A submitted play also shows where it placed on the map's leaderboard, like #7 of 41. If it didn't
+beat your best on that map, the number is your best's spot, drawn as an outline. Click it, or
+"Leaderboard" on plays that aren't on the board, to see the map's top 50 with your own row
+highlighted. While you're picking a song in osu!, the podium button next to the gear shows the
+leaderboard of the selected map and follows it as you scroll. It follows your mods too: with Half
+Time or Daycore it shows only HT/DC plays, with Double Time or Nightcore only DT/NC plays, at any
+rate and with each play's rate next to it. Invert, Hold Off and No Release each have their own
+board as well, and Mirror and the visual mods don't change anything.
+
 A play that hasn't been sent yet has Hold and Remove under it. Hold keeps it back until you press
 Send, and Remove drops it so it's never sent. Most plays go out a few seconds after the map ends,
 so these mostly matter for plays still waiting for their replay.
@@ -103,6 +112,7 @@ computer and goes straight to the tray, so it's already running when you play.
 "Start in the tray" is off by default. With it on, opening the app only puts its icon in the tray.
 Click the icon, or open the app again, to see the window.
 
+"Show dans" hides the dan next to each play's MSD, for anyone who'd rather not see an estimate.
 The theme color has the same presets and sliders as Mania Tracker.
 
 Disconnect signs the app out and revokes its access. You can also remove it from your connected

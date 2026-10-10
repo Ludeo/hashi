@@ -53,6 +53,8 @@ pub(crate) struct TosuState {
     pub client: Option<String>,
     pub state: Option<String>,
     pub player: Option<String>,
+    // the mania map selected or being played, for its leaderboard
+    pub map: Option<Value>,
     pub launch: Option<&'static str>,
     pub blocked: Option<String>,
     pub found: Option<bool>,
@@ -82,6 +84,7 @@ impl TosuState {
             client: None,
             state: None,
             player: None,
+            map: None,
             launch: None,
             blocked: None,
             found: None,
@@ -108,6 +111,7 @@ impl TosuState {
             "client": self.client,
             "state": self.state,
             "player": self.player,
+            "map": self.map,
             "launch": self.launch,
             "blocked": self.blocked.as_ref().map(|fix| json!({ "fix": fix })),
         })
@@ -118,6 +122,7 @@ impl TosuState {
         self.client = None;
         self.state = None;
         self.player = None;
+        self.map = None;
     }
 }
 
@@ -149,6 +154,25 @@ fn str_of(v: Option<&Value>) -> Option<String> {
     v.and_then(Value::as_str).map(String::from)
 }
 
+fn selected_map(raw: &Value) -> Option<Value> {
+    let bm = raw.get("beatmap")?;
+    if bm.pointer("/mode/number").and_then(Value::as_i64) != Some(3) {
+        return None;
+    }
+    let md5 = bm.get("checksum").and_then(Value::as_str).filter(|c| crate::leaderboard::valid_md5(c))?.to_lowercase();
+    let keys = bm.pointer("/stats/cs/original").and_then(Value::as_f64).map(f64::round);
+    let (speed, mods) = crate::leaderboard::variant(&crate::presence::mod_acronyms(raw.pointer("/play/mods").unwrap_or(&Value::Null)));
+    Some(json!({
+        "md5": md5,
+        "artist": bm.get("artist"),
+        "title": bm.get("title"),
+        "version": bm.get("version"),
+        "keys": keys,
+        "speed": speed,
+        "mods": mods,
+    }))
+}
+
 fn on_tosu_message(b: &Arc<Bridge>, raw: Value) {
     let mut finished = None;
     {
@@ -175,6 +199,12 @@ fn on_tosu_message(b: &Arc<Bridge>, raw: Value) {
             t.state = Some(state.clone());
             t.player = player;
             t.client = Some(client.into());
+            b.broadcast();
+        }
+
+        let map = selected_map(&raw);
+        if t.map != map {
+            t.map = map;
             b.broadcast();
         }
 

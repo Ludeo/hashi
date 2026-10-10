@@ -24,7 +24,7 @@ function playStatus(p) {
   switch (r?.state) {
     case undefined:
     case "awaiting_assets": return { kind: "spin", label: "Uploading" };
-    case "queued": return { kind: "spin", label: "In queue" };
+    case "queued": return { kind: "spin", label: "Submitting" };
     case "validating":
     case "analyzing": return { kind: "spin", label: "Processing" };
     case "deferred": return { kind: "spin", label: "Processing", detail: "Taking a little longer than usual" };
@@ -406,15 +406,21 @@ async function action(name) {
   }
 }
 
+// mappers often name the difficulty "[7K] Insane" already
+function diffName(keys, version) {
+  const k = keys ? `${Math.round(keys)}K` : null;
+  if (k && version && new RegExp(`\\b${k}\\b`, "i").test(version)) return version;
+  return [k, version].filter(Boolean).join(" ");
+}
+
 function chartName(play) {
-  const keys = play.keys ? `${Math.round(play.keys)}K ` : "";
-  const version = play.version ?? "";
-  return `${play.title ?? "Unknown"} [${keys}${version}]`.replace(" []", "");
+  const diff = diffName(play.keys, play.version);
+  return diff ? `${play.title ?? "Unknown"} [${diff}]` : play.title ?? "Unknown";
 }
 
 function playRow(p) {
   const status = playStatus(p);
-  const diff = [p.play.keys ? `${Math.round(p.play.keys)}K` : null, p.play.version].filter(Boolean).join(" ");
+  const diff = diffName(p.play.keys, p.play.version);
   const acc = typeof p.play.accuracy === "number" && p.play.accuracy > 0 ? `${p.play.accuracy.toFixed(2)}%` : null;
   const mods = modList(p.play.mods);
   const holdable = ["waiting_replay", "send"].includes(p.phase);
@@ -436,7 +442,7 @@ function playRow(p) {
       (status.detail || removable) && el("span", { class: "detail" }, status.detail && el("span", {}, status.detail),
         holdable && el("button", { class: "link act", disabled: slow, onclick: play(p.onHold ? "send" : "hold") }, p.onHold ? "Send" : "Hold"),
         removable && el("button", { class: "link act", disabled: slow, onclick: play("remove") }, "Remove")),
-      rating(p.rating),
+      rating(p),
     ),
     el("div", { class: "side" },
       stamp(status, p.id),
@@ -451,11 +457,28 @@ function danName(d) {
   return d.ln ? `LN ${name}` : name;
 }
 
-function rating(r) {
-  if (!r) return null;
+function rankButton(p) {
+  if (!p.url || !p.md5) return null;
+  const r = p.rank;
+  const open = () => openBoard({ md5: p.md5, artist: p.play.artist, title: p.play.title, version: p.play.version, keys: p.play.keys }, false, r?.position, r ?? modVariant(modList(p.play.mods)));
+  if (!r) return el("button", { class: "link act board-link", onclick: open }, "Leaderboard");
+  return el("button", {
+    class: `rank${r.best ? "" : " off"}`,
+    title: r.best ? "Your spot on this map's leaderboard" : "Not a new best. Your best is here on this map's leaderboard",
+    onclick: open,
+  }, `#${r.position}`, r.total && el("span", {}, ` of ${r.total}`));
+}
+
+function rating(p) {
+  const r = p.rating;
+  const rank = rankButton(p);
+  const msd = typeof r?.msd === "number";
+  const dan = r?.dan && snapshot.showDans !== false;
+  if (!rank && !msd && !dan) return null;
   return el("div", { class: "rating" },
-    typeof r.msd === "number" && el("span", { class: "msd" }, el("b", {}, r.msd.toFixed(2)), " MSD"),
-    r.dan && el("span", {
+    rank,
+    msd && el("span", { class: "msd" }, el("b", {}, r.msd.toFixed(2)), " MSD"),
+    dan && el("span", {
       class: `dan${r.dan.eligible ? "" : " off"}`,
       title: r.dan.eligible ? null : "This play doesn't count toward your dan",
     }, danName(r.dan)));
@@ -491,16 +514,190 @@ function playList(plays) {
 }
 
 function fitPage() {
-  const list = document.querySelector(".home .plays");
   const shore = document.querySelector(".shore");
+  const list = document.querySelector(".home .plays, .home .standings");
   if (!list || !shore) return;
   const scroller = document.documentElement.classList.contains("framed") ? app : document.scrollingElement;
-  const top = list.getBoundingClientRect().top + scroller.scrollTop;
-  const fit = Math.max(3, Math.floor((innerHeight - top - PAGER_PX - shore.offsetHeight) / ROW_PX));
+  const room = innerHeight - (list.getBoundingClientRect().top + scroller.scrollTop) - PAGER_PX - shore.offsetHeight;
+  if (list.classList.contains("standings")) {
+    const fit = Math.max(5, Math.floor((room - (list.querySelector(".mine")?.offsetHeight ?? 0)) / STANDING_PX));
+    if (fit === board.perPage) return;
+    board.page = Math.floor(board.page * board.perPage / fit);
+    board.perPage = fit;
+    return render();
+  }
+  const fit = Math.max(3, Math.floor(room / ROW_PX));
   if (fit === perPage) return;
   page = Math.floor(page * perPage / fit);
   perPage = fit;
   render();
+}
+
+// a map's leaderboard. follow: it's the map selected in osu!, and changes with it
+const STANDING_PX = 44;
+let board = null;
+let boardTimer = 0;
+
+// which of a map's boards: speed "ht", "dt" or none (nomod and DT together), plus Invert, Hold Off, No Release
+const boardKey = (b) => `${b.md5}?speed=${b.speed ?? ""}&mods=${(b.mods ?? []).join(",")}`;
+
+// same as the helper's for the selected map
+function modVariant(mods) {
+  const has = (...l) => mods.some((m) => l.includes(m));
+  return { speed: has("HT", "DC") ? "ht" : has("DT", "NC") ? "dt" : null, mods: ["HO", "IN", "NR"].filter((m) => has(m)) };
+}
+
+// at: a position to open on the page of, a play's rank
+function openBoard(map, follow = false, at = null, variant = map) {
+  settingsOpen = false;
+  board = {
+    map, follow, at, md5: map.md5, speed: variant.speed ?? null, mods: variant.mods ?? [],
+    data: null, error: null, page: 0, perPage: board?.perPage ?? 8, seen: acceptedOn(map.md5),
+  };
+  loadBoard();
+  render();
+}
+
+function closeBoard() {
+  board = null;
+  clearTimeout(boardTimer);
+  render();
+}
+
+function acceptedOn(md5) {
+  return snapshot.plays.filter((p) => p.md5 === md5 && p.receipt?.state === "accepted").length;
+}
+
+async function loadBoard() {
+  const want = board;
+  want.loading = true;
+  try {
+    const res = await fetch(`${BRIDGE}/leaderboard/${boardKey(want)}`);
+    const body = await res.json().catch(() => ({}));
+    if (board !== want) return;
+    if (res.ok) {
+      want.data = body;
+      want.error = null;
+    } else {
+      want.error = body.error ?? "Couldn't load the leaderboard.";
+    }
+  } catch {
+    if (board === want) want.error = "Lost Hashi's helper.";
+  }
+  want.loading = false;
+  if (board === want) render();
+}
+
+// called on every render, follows the selection and new plays on the map
+function boardChanged() {
+  if (!board) return;
+  const selected = snapshot.tosu.map;
+  if (board.follow && selected && boardKey(selected) !== boardKey(board)) {
+    board.map = selected;
+    board.md5 = selected.md5;
+    board.speed = selected.speed ?? null;
+    board.mods = selected.mods ?? [];
+    board.data = board.error = null;
+    board.page = 0;
+    board.seen = acceptedOn(selected.md5);
+    clearTimeout(boardTimer);
+    // scrolling through song select shouldn't ask for every map on the way
+    boardTimer = setTimeout(loadBoard, 500);
+    return;
+  }
+  const seen = acceptedOn(board.md5);
+  if (seen !== board.seen) {
+    board.seen = seen;
+    loadBoard();
+  }
+}
+
+const GRADES = { XH: ["SS", "silver"], X: ["SS", "gold"], SH: ["S", "silver"], S: ["S", "gold"], A: ["A", "a"], B: ["B", "b"], C: ["C", "c"], D: ["D", "d"], F: ["F", "d"] };
+
+function ago(iso) {
+  const s = (Date.now() - new Date(iso)) / 1000;
+  if (!(s >= 0)) return "";
+  for (const [n, unit] of [[31536000, "y"], [2592000, "mo"], [86400, "d"], [3600, "h"], [60, "m"]]) {
+    if (s >= n) return `${Math.floor(s / n)}${unit} ago`;
+  }
+  return "now";
+}
+
+function standing(e, mine) {
+  const [grade, tone] = GRADES[e.grade] ?? [e.grade, "d"];
+  const name = e.username === snapshot.connection.username;
+  return el("li", { class: `standing${name ? " me" : ""}${mine ? " mine" : ""}` },
+    el("span", { class: "pos" }, `#${e.position ?? "?"}`),
+    grade && el("span", { class: `grade ${tone}` }, grade),
+    el("span", { class: "avatar" }, e.avatarUrl && el("img", { src: e.avatarUrl, alt: "", loading: "lazy" })),
+    el("a", {
+      class: "player",
+      href: `${snapshot.connection.origin}/player/${encodeURIComponent(e.username)}`,
+      target: "_blank",
+      rel: "noreferrer",
+      title: `Open ${e.username}'s profile on Mania Tracker`,
+    }, e.username),
+    e.app === "mania-bridge" && el("img", { class: "app", src: "images/app.svg", alt: "", title: "Sent with Hashi" }),
+    el("span", { class: "mods" }, e.mods.filter((m) => m !== "CL").map(modBadge)),
+    board.speed && el("span", { class: "rate" }, typeof e.rate === "number" ? `${+e.rate.toFixed(2)}x` : ""),
+    el("span", { class: "acc" }, typeof e.accuracy === "number" ? `${e.accuracy.toFixed(2)}%` : ""),
+    el("span", { class: "when", title: e.playedAt ? new Date(e.playedAt).toLocaleString() : null }, e.playedAt ? ago(e.playedAt) : ""));
+}
+
+function boardView() {
+  const { map, data } = board;
+  const title = data?.title ?? map.title ?? "Unknown";
+  const diff = diffName(map.keys, data?.version ?? map.version);
+  const players = data?.entries?.length ? `${data.total} ${data.total === 1 ? "player" : "players"}` : null;
+  const head = el("div", { class: "head" },
+    el("p", { class: "say" }, "Leaderboard"),
+    el("button", { class: "link", onclick: closeBoard }, "Back to plays"));
+  const about = el("div", { class: "map" },
+    data?.url
+      ? el("a", { class: "title", href: data.url, target: "_blank", rel: "noreferrer", title: "Open on Mania Tracker" }, title)
+      : el("span", { class: "title" }, title),
+    el("span", { class: "artist" }, data?.artist ?? map.artist),
+    el("div", { class: "facts" },
+      diff && el("span", {}, diff),
+      (board.speed || board.mods.length > 0) && el("span", { class: "mods", title: "Only plays with these mods" },
+        [board.speed && { ht: "HT", dt: "DT" }[board.speed], ...board.mods].filter(Boolean).map(modBadge)),
+      players && el("span", { class: "players" }, players)),
+    board.follow && el("span", { class: "line" }, "The map selected in osu!"));
+
+  let body;
+  if (board.error) {
+    body = el("p", { class: "status bad" }, board.error, " ", el("button", { class: "link", onclick: () => { board.error = null; loadBoard(); render(); } }, "Try again"));
+  } else if (!data) {
+    body = el("p", { class: "doing" }, el("i", { class: "spinner", style: `animation-delay: -${Date.now() % SPIN_MS}ms` }), "Loading");
+  } else if (data.unsupported) {
+    body = el("p", { class: "lead" }, "Mania Tracker can't show leaderboards to Hashi yet.");
+  } else if (data.unknown) {
+    body = el("p", { class: "lead" }, "Mania Tracker doesn't know this map yet. Finish it once and it will.");
+  } else if (!data.entries.length) {
+    body = el("p", { class: "lead" }, "Nobody has played this map yet.");
+  } else {
+    const pages = Math.ceil(data.entries.length / board.perPage);
+    // kept until the page is turned, the page size can still change once it's drawn
+    const at = data.entries.findIndex((e) => e.position === board.at);
+    if (at >= 0) board.page = Math.floor(at / board.perPage);
+    board.page = Math.max(0, Math.min(board.page, pages - 1));
+    const from = board.page * board.perPage;
+    const shown = data.entries.slice(from, from + board.perPage);
+    const turn = (by) => () => {
+      board.page += by;
+      board.at = null;
+      render();
+    };
+    body = el("div", { class: "history" },
+      el("ol", { class: "standings" },
+        shown.map((e) => standing(e)),
+        data.self && standing(data.self, true)),
+      el("div", { class: "pager" },
+        el("button", { class: "link", disabled: board.page === 0, onclick: turn(-1) }, "Previous"),
+        el("span", {}, `${from + 1}–${from + shown.length} of ${data.entries.length}`),
+        el("button", { class: "link", disabled: board.page >= pages - 1, onclick: turn(1) }, "Next")));
+  }
+  return el("div", { class: "board" }, head, about, body);
 }
 
 const PRESENCE_NOTES = {
@@ -705,7 +902,9 @@ function settings(c, host, reconnect) {
         ? el("button", { class: "key go", disabled: slow, onclick: () => action("connect") }, "Connect again")
         : el("button", { class: "key danger", disabled: slow, onclick: () => action("disconnect") }, "Disconnect")),
     computer.length > 0 && [el("p", { class: "group" }, "This computer"), ...computer],
-    snapshot.theme && [el("p", { class: "group" }, "Look"), themeSetting()],
+    el("p", { class: "group" }, "Look"),
+    snapshot.showDans != null && toggle("Show dans", snapshot.showDans, "show-dans", "The dan next to a play's MSD. It's a rough estimate."),
+    snapshot.theme && themeSetting(),
     el("p", { class: "about" }, `Hashi ${snapshot.version}`,
       snapshot.update && !snapshot.update.step
         && [" · ", el("button", { class: "link", disabled: slow, onclick: getUpdate }, `${snapshot.update.install ? "Update to" : "Get"} ${snapshot.update.version}`)]));
@@ -713,6 +912,7 @@ function settings(c, host, reconnect) {
 
 function toggleSettings() {
   settingsOpen = !settingsOpen;
+  if (settingsOpen) board = null;
   lockedHint = null;
   render();
 }
@@ -776,6 +976,12 @@ function home(c, host) {
           }, c.username),
           host && el("span", {}, host)),
         now()),
+      snapshot.tosu.map && el("button", {
+        class: `gear${board?.follow ? " on" : ""}`,
+        title: "Leaderboard of the map selected in osu!",
+        "aria-pressed": String(!!board?.follow),
+        onclick: () => (board?.follow ? closeBoard() : openBoard(snapshot.tosu.map, true)),
+      }, icon(PODIUM)),
       el("button", { class: `gear${settingsOpen ? " on" : ""}`, title: "Settings", "aria-pressed": String(settingsOpen), onclick: toggleSettings }, icon(GEAR))),
     update(),
     tosuHint(),
@@ -785,6 +991,8 @@ function home(c, host) {
     helperDown && el("p", { class: "status warn" }, "Lost Hashi's helper. Reconnecting."),
     settingsOpen
       ? settings(c, host, reconnect)
+      : board
+        ? boardView()
       : snapshot.plays.length
         ? playList(snapshot.plays)
         : el("div", { class: "nothing" },
@@ -796,6 +1004,7 @@ function home(c, host) {
 }
 
 const GEAR = `<path d="M4.10 0.39L5.90 0.39L6.07 1.88L7.16 2.51L8.55 1.92L9.44 3.47L8.24 4.37L8.24 5.63L9.44 6.53L8.55 8.08L7.16 7.49L6.07 8.12L5.90 9.61L4.10 9.61L3.93 8.12L2.84 7.49L1.45 8.08L0.56 6.53L1.76 5.63L1.76 4.37L0.56 3.47L1.45 1.92L2.84 2.51L3.93 1.88z" stroke-linejoin="round"/><circle cx="5" cy="5" r="1.4"/>`;
+const PODIUM = `<path d="M3.5 9.5v-5h3v5M.5 9.5v-3h3M6.5 9.5v-4h3v4M0 9.5h10M5 1l.5 1h1l-.8.7.3 1-1-.6-1 .6.3-1-.8-.7h1z" stroke-linejoin="round"/>`;
 const TRAY = `<path d="M1 1l6 6M7 3v4H3M.5 9.5h9"/>`;
 
 function render() {
@@ -824,7 +1033,11 @@ function render() {
   if (!hasAccount) crossAt = 0;
   wasConnecting = c.status === "connecting";
   const atHome = hasAccount && !crossAt;
-  if (!atHome) settingsOpen = false;
+  if (!atHome) {
+    settingsOpen = false;
+    board = null;
+  }
+  boardChanged();
 
   if (!snapshot.titlebar && location.origin === BRIDGE) {
     app.append(el("div", { class: "corner" },
