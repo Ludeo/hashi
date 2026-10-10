@@ -16,8 +16,8 @@ pub trait Updater: Send + Sync {
     fn install(&self, url: String, progress: Progress) -> BoxFuture<'static, Result<(), String>>;
 }
 
-pub const LATEST_FILE: &str = "/bridge/latest.json";
-const DOWNLOAD_PAGE: &str = "/bridge";
+pub const LATEST_FILE: &str = "/hashi/latest.json";
+const DOWNLOAD_PAGE: &str = "/hashi";
 const FIRST_CHECK: Duration = Duration::from_secs(10);
 const EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 const MAX_BYTES: usize = 64 * 1024;

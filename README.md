@@ -32,7 +32,7 @@ sees osu!stable.
 
 ## Install
 
-Download the latest version from [mania-tracker.com/bridge](https://mania-tracker.com/bridge),
+Download the latest version from [mania-tracker.com/hashi](https://mania-tracker.com/hashi),
 which picks the right file for your system. Every release is also on this repository's
 [Releases](../../releases) page.
 
