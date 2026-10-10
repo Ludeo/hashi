@@ -437,7 +437,7 @@ fn handle_error(b: &Arc<Bridge>, item: &mut Item, res: &Resp, body: &Value, stag
         .map(String::from)
         .unwrap_or_else(|| format!("{stage} answered {}", res.status));
     let retry_after = res.header("retry-after").and_then(|v| v.trim().parse::<f64>().ok()).filter(|v| v.is_finite() && *v > 0.0);
-    let retry_after_ms = retry_after.map(|s| (s * 1000.0) as i64);
+    let retry_after_ms = retry_after.map(|s| (s.min(86_400.0) * 1000.0) as i64);
 
     if res.status == 401 {
         // token_expired already got its one refresh in api()
@@ -458,7 +458,8 @@ fn handle_error(b: &Arc<Bridge>, item: &mut Item, res: &Resp, body: &Value, stag
     if res.status == 403 && code == "account_not_allowed" {
         return Err(Fail::Conn("not_in_beta", message));
     }
-    if res.status == 404 {
+    // reserving makes the submission, a 404 there is the site having trouble
+    if res.status == 404 && stage != "reserve" {
         item.phase = "done".into();
         item.error = ItemError::new("gone", "The server no longer has this submission.");
         return Ok(None);

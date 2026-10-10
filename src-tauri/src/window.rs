@@ -3,6 +3,7 @@
 
 use std::io::{BufRead, Write};
 use std::net::{SocketAddr, TcpStream};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
@@ -15,6 +16,8 @@ const MAIN: &str = "main";
 const OPENING: &str = "opening";
 
 static HELPER_PORT: OnceLock<u16> = OnceLock::new();
+// windows: the background goes first, this one has to stay until the installer is started
+static INSTALLING: AtomicBool = AtomicBool::new(false);
 
 struct Args {
     url: String,
@@ -184,6 +187,10 @@ fn commands(app: AppHandle) {
         let run = app.clone();
         let _ = app.run_on_main_thread(move || command(&run, &line));
     }
+    // the updater exits by itself once the installer runs
+    if INSTALLING.load(Ordering::SeqCst) {
+        std::thread::sleep(Duration::from_secs(30));
+    }
     app.exit(0);
 }
 
@@ -228,6 +235,8 @@ async fn update(app: &AppHandle, url: &str) -> Result<(), String> {
                 wait_until_closed(*port);
             }
         })
+        // it would start this window again, without the background. the installer starts the app
+        .restart_after_install(false)
         .build()
         .map_err(|e| e.to_string())?;
     let update = updater.check().await.map_err(|e| e.to_string())?.ok_or("There's no update for this copy.")?;
@@ -247,10 +256,10 @@ async fn update(app: &AppHandle, url: &str) -> Result<(), String> {
         .await
         .map_err(|e| e.to_string())?;
     // .deb and .rpm ask for the password here
-    tauri::async_runtime::spawn_blocking(move || update.install(bytes))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())?;
+    INSTALLING.store(cfg!(windows), Ordering::SeqCst);
+    let installed = tauri::async_runtime::spawn_blocking(move || update.install(bytes)).await;
+    INSTALLING.store(false, Ordering::SeqCst);
+    installed.map_err(|e| e.to_string())?.map_err(|e| e.to_string())?;
     tell("relaunch");
     Ok(())
 }

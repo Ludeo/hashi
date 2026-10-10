@@ -56,8 +56,10 @@ mod imp {
         ))
     }
 
+    // session settings turn it off by adding one of these rather than deleting it
     pub fn enabled() -> bool {
-        entry().is_file()
+        std::fs::read_to_string(entry())
+            .is_ok_and(|t| !t.lines().map(str::trim).any(|l| l == "Hidden=true" || l == "X-GNOME-Autostart-enabled=false"))
     }
 
     pub fn set(on: bool) -> Result<(), String> {
@@ -104,8 +106,17 @@ mod imp {
         Ok(format!("\"{}\" {}", super::program()?.display(), super::HIDDEN))
     }
 
-    pub fn enabled() -> bool {
+    fn listed() -> bool {
         windows_registry::CURRENT_USER.open(RUN).and_then(|k| k.get_string(NAME)).is_ok()
+    }
+
+    // task manager turns it off with an odd first byte
+    fn turned_off() -> bool {
+        windows_registry::CURRENT_USER.open(APPROVED).and_then(|k| k.get_value(NAME)).is_ok_and(|v| v.first().is_some_and(|b| (b & 1) == 1))
+    }
+
+    pub fn enabled() -> bool {
+        listed() && !turned_off()
     }
 
     pub fn set(on: bool) -> Result<(), String> {
@@ -118,16 +129,16 @@ mod imp {
             Ok(())
         } else {
             match run.remove_value(NAME) {
-                Err(_) if !enabled() => Ok(()),
+                Err(_) if !listed() => Ok(()),
                 r => r.map_err(|e| e.to_string()),
             }
         }
     }
 
-    // the install folder may have changed with a reinstall
+    // the install folder may have changed with a reinstall. only the path, it stays off if it was turned off
     pub fn refresh() {
-        if enabled() {
-            let _ = set(true);
+        if let (true, Ok(run), Ok(command)) = (listed(), windows_registry::CURRENT_USER.create(RUN), command()) {
+            let _ = run.set_string(NAME, command);
         }
     }
 }

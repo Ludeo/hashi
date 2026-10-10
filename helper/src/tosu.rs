@@ -59,6 +59,8 @@ pub(crate) struct TosuState {
     pub blocked: Option<String>,
     pub found: Option<bool>,
     pub lazer_files_dir: PathBuf,
+    // stable's folder and its Songs, wherever it's installed
+    pub stable_dirs: Option<(PathBuf, PathBuf)>,
     pub last_frame_at: i64,
     pub last_frame: Option<Value>,
     prev_state: Option<String>,
@@ -72,6 +74,8 @@ pub(crate) struct TosuState {
     pending_finish: Option<PendingFinish>,
     connected_at: i64,
     exe: Option<PathBuf>,
+    // tosu's own setting, None when there's no tosu here to change it for
+    pub dashboard: Option<bool>,
     // send it where to say it's stopped
     kill: Option<oneshot::Sender<oneshot::Sender<()>>>,
 }
@@ -89,6 +93,7 @@ impl TosuState {
             blocked: None,
             found: None,
             lazer_files_dir,
+            stable_dirs: None,
             last_frame_at: 0,
             last_frame: None,
             prev_state: None,
@@ -100,6 +105,7 @@ impl TosuState {
             pending_finish: None,
             connected_at: 0,
             exe: None,
+            dashboard: None,
             kill: None,
         }
     }
@@ -124,6 +130,18 @@ impl TosuState {
         self.player = None;
         self.map = None;
     }
+}
+
+// a path tosu sees. stable runs under wine on linux, where only Z: is the real filesystem
+fn local_path(p: &str) -> Option<PathBuf> {
+    if p.is_empty() {
+        return None;
+    }
+    if cfg!(windows) || p.starts_with('/') {
+        return Some(PathBuf::from(p));
+    }
+    let rest = p.strip_prefix("Z:\\").or_else(|| p.strip_prefix("z:\\"))?;
+    Some(PathBuf::from(format!("/{}", rest.replace('\\', "/"))))
 }
 
 pub(crate) fn mods_number(mods: &Value) -> i64 {
@@ -193,6 +211,14 @@ fn on_tosu_message(b: &Arc<Bridge>, raw: Value) {
         if client == "lazer" {
             if let Some(songs) = raw.pointer("/folders/songs").and_then(Value::as_str).filter(|x| !x.is_empty()) {
                 t.lazer_files_dir = PathBuf::from(songs);
+            }
+        } else {
+            let folder = |k: &str| raw.pointer(&format!("/folders/{k}")).and_then(Value::as_str).and_then(local_path);
+            if let (Some(game), Some(songs)) = (folder("game"), folder("songs")) {
+                if t.stable_dirs.as_ref() != Some(&(game.clone(), songs.clone())) && game.is_dir() {
+                    log!("osu! is in {}, its songs in {}", game.display(), songs.display());
+                    t.stable_dirs = Some((game, songs));
+                }
             }
         }
         if t.state.as_deref() != Some(&state) || t.player != player || t.client.as_deref() != Some(client) {
@@ -402,6 +428,8 @@ pub(crate) fn connect_tosu(b: &Arc<Bridge>) {
                 warned = false;
                 log!("tosu connected");
                 b.broadcast();
+                let b2 = b.clone();
+                b.spawn(async move { remember_tosu(&b2).await });
                 while let Some(Ok(msg)) = ws.next().await {
                     let parsed = match msg {
                         Message::Text(t) => serde_json::from_str::<Value>(t.as_str()),
@@ -479,6 +507,27 @@ fn find_process(names: &[&str]) -> Option<String> {
     None
 }
 
+// linux only. node renames its main thread, so tosu isn't found by name. once it has cap_sys_ptrace
+// its exe link can't be read either, only how it was started. a tosu under wine is started as tosu.exe
+fn tosu_process() -> Option<PathBuf> {
+    for entry in std::fs::read_dir("/proc").ok()?.flatten() {
+        let pid = entry.file_name().to_string_lossy().into_owned();
+        if !pid.chars().all(|c| c.is_ascii_digit()) {
+            continue;
+        }
+        let Ok(cmdline) = std::fs::read(format!("/proc/{pid}/cmdline")) else { continue };
+        let arg0 = PathBuf::from(String::from_utf8_lossy(cmdline.split(|c| *c == 0).next().unwrap_or_default()).into_owned());
+        if !arg0.file_name().is_some_and(|n| n == "tosu") {
+            continue;
+        }
+        let exe = std::fs::read_link(format!("/proc/{pid}/exe")).ok().or_else(|| arg0.is_absolute().then_some(arg0));
+        if let Some(exe) = exe.filter(|e| e.is_file()) {
+            return Some(exe);
+        }
+    }
+    None
+}
+
 // yama's ptrace_scope 1+ (most distros) stops tosu reading osu!'s memory unless it has cap_sys_ptrace.
 // tosu then answers with nothing, which looks exactly like osu! being closed
 fn check_tosu_blocked(b: &Arc<Bridge>) {
@@ -491,7 +540,7 @@ fn check_tosu_blocked(b: &Arc<Bridge>) {
     if cfg!(not(windows)) && connected && !osu && now_ms() - since > 10_000 {
         let scope: i64 = std::fs::read_to_string("/proc/sys/kernel/yama/ptrace_scope").ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0);
         if scope >= 1 && find_process(&["osu!", "osu!.exe"]).is_some() {
-            let exe = exe.or_else(|| find_process(&["tosu"]).and_then(|pid| std::fs::read_link(format!("/proc/{pid}/exe")).ok()));
+            let exe = exe.or_else(tosu_process);
             let shown = exe.map(|e| shell_quote(&e.display().to_string())).unwrap_or("path/to/tosu".into());
             blocked = Some(format!("sudo setcap cap_sys_ptrace=eip {shown}"));
         }
@@ -531,6 +580,7 @@ fn subdirs(parent: &Path, prefix: &str) -> Vec<PathBuf> {
 fn find_tosu(b: &Bridge) -> Option<PathBuf> {
     let home = crate::home();
     let mut candidates: Vec<PathBuf> = b.env.tosu_path.iter().cloned().collect();
+    candidates.extend(b.st().config.tosu_path.clone());
     candidates.push(crate::get_tosu::install_dir(b).join(crate::get_tosu::exe_name()));
     if cfg!(windows) {
         let v = |k: &str, d: PathBuf| crate::var(k).map(PathBuf::from).unwrap_or(d);
@@ -567,6 +617,7 @@ pub(crate) fn check_tosu_launch(b: &Arc<Bridge>) {
         tokio::time::sleep(Duration::from_secs(3)).await;
         let found = find_tosu(&b).is_some();
         b.st().tosu.found = Some(found);
+        refresh_dashboard(&b);
         if b.st().tosu.connected {
             return b.broadcast();
         }
@@ -585,7 +636,7 @@ pub(crate) fn check_tosu_launch(b: &Arc<Bridge>) {
 }
 
 pub(crate) fn recheck_found(b: &Arc<Bridge>) {
-    if !b.env.tosu_can_start || b.st().tosu.connected || b.st().get_tosu.step.is_some() {
+    if !b.env.tosu_can_start || b.st().tosu.connected || matches!(b.st().get_tosu.step, Some("downloading" | "unpacking")) {
         return;
     }
     let found = Some(find_tosu(b).is_some());
@@ -693,8 +744,179 @@ pub(crate) async fn stop_tosu(b: &Arc<Bridge>) {
     }
 }
 
+async fn running_tosu() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        let script = "[Console]::OutputEncoding = [Text.Encoding]::UTF8; (Get-Process -Name tosu -ErrorAction SilentlyContinue | Select-Object -First 1).Path";
+        let mut cmd = tokio::process::Command::new("powershell");
+        cmd.args(["-NoProfile", "-NonInteractive", "-Command", script])
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true);
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        let out = tokio::time::timeout(Duration::from_secs(15), cmd.output()).await.ok()?.ok()?;
+        let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        (!path.is_empty()).then(|| PathBuf::from(path))
+    }
+    #[cfg(not(windows))]
+    {
+        tosu_process()
+    }
+}
+
+// so it's found again wherever it is, and its settings with it
+async fn remember_tosu(b: &Arc<Bridge>) {
+    if !b.env.tosu_can_start {
+        return;
+    }
+    if let Some(exe) = running_tosu().await.filter(|p| p.is_file()) {
+        let changed = {
+            let mut s = b.st();
+            s.tosu.found = Some(true);
+            let changed = s.config.tosu_path.as_ref() != Some(&exe);
+            if changed {
+                s.config.tosu_path = Some(exe.clone());
+            }
+            changed
+        };
+        if changed {
+            log!("tosu is at {}", exe.display());
+            b.save_config().await;
+        }
+    }
+    refresh_dashboard(b);
+}
+
+const DASHBOARD: &str = "OPEN_DASHBOARD_ON_STARTUP";
+
+// tosu.env of each tosu here, the one in use first. tosu's linux build keeps it in ~/.config/tosu,
+// the windows one (also osu-winello's, under wine) next to tosu.exe
+fn env_files(b: &Bridge) -> Vec<PathBuf> {
+    if cfg!(windows) {
+        return find_tosu(b).and_then(|exe| Some(exe.parent()?.join("tosu.env"))).into_iter().collect();
+    }
+    let xdg = |k: &str, d: PathBuf| crate::var(k).map(PathBuf::from).unwrap_or(d);
+    let native = xdg("XDG_CONFIG_HOME", crate::home().join(".config")).join("tosu").join("tosu.env");
+    let winello = xdg("XDG_DATA_HOME", crate::home().join(".local").join("share")).join("osuconfig").join("tosu");
+    let mut files = vec![];
+    // a native tosu writes it on its first start
+    if native.is_file() || find_tosu(b).is_some() {
+        files.push(native);
+    }
+    if winello.is_dir() {
+        let pos = if b.st().tosu.launch == Some("with-osu") { 0 } else { files.len() };
+        files.insert(pos, winello.join("tosu.env"));
+    }
+    files
+}
+
+// dotenv's way: the last one wins, and tosu takes only "true" as true
+fn dashboard_value(text: &str) -> Option<bool> {
+    text.lines().rev().find_map(|l| {
+        let (k, v) = l.split_once('=')?;
+        (k.trim() == DASHBOARD).then(|| v.trim().trim_matches(['"', '\'']) == "true")
+    })
+}
+
+fn with_dashboard(text: &str, on: bool) -> String {
+    let line = format!("{DASHBOARD}={on}");
+    let mut found = false;
+    let mut lines: Vec<String> = text
+        .lines()
+        .map(|l| {
+            if l.split_once('=').is_some_and(|(k, _)| k.trim() == DASHBOARD) {
+                found = true;
+                line.clone()
+            } else {
+                l.to_string()
+            }
+        })
+        .collect();
+    if !found {
+        lines.push(line);
+    }
+    let nl = if text.contains("\r\n") { "\r\n" } else { "\n" };
+    // tosu writes it without one at the end
+    let end = if text.is_empty() || text.ends_with('\n') { nl } else { "" };
+    lines.join(nl) + end
+}
+
+pub(crate) fn refresh_dashboard(b: &Arc<Bridge>) {
+    let on = env_files(b).first().map(|f| std::fs::read_to_string(f).ok().and_then(|t| dashboard_value(&t)).unwrap_or(true));
+    let changed = {
+        let mut s = b.st();
+        let changed = s.tosu.dashboard != on;
+        s.tosu.dashboard = on;
+        changed
+    };
+    if changed {
+        b.broadcast();
+    }
+}
+
+// Err names the file that couldn't be changed
+pub(crate) async fn set_dashboard(b: &Arc<Bridge>, on: bool) -> Result<(), String> {
+    let files = env_files(b);
+    if files.is_empty() {
+        return Err("Couldn't find tosu on this computer.".into());
+    }
+    let mut failed = None;
+    for file in files {
+        let text = match tokio::fs::read_to_string(&file).await {
+            Ok(t) => t,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => {
+                log!("couldn't read {}: {e}", file.display());
+                failed = Some(file);
+                continue;
+            }
+        };
+        let tmp = file.with_extension("env.hashi.tmp");
+        let written = async {
+            if let Some(dir) = file.parent() {
+                tokio::fs::create_dir_all(dir).await?;
+            }
+            tokio::fs::write(&tmp, with_dashboard(&text, on)).await?;
+            tokio::fs::rename(&tmp, &file).await
+        }
+        .await;
+        if let Err(e) = written {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            log!("couldn't write {}: {e}", file.display());
+            failed = Some(file);
+        }
+    }
+    log!("tosu's dashboard on start {}", if on { "on" } else { "off" });
+    refresh_dashboard(b);
+    match failed {
+        Some(f) => Err(format!("Couldn't change tosu's settings in {}.", f.display())),
+        None => Ok(()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn paths() {
+        if cfg!(not(windows)) {
+            assert_eq!(super::local_path("Z:\\home\\a\\osu!"), Some("/home/a/osu!".into()));
+            assert_eq!(super::local_path("C:\\osu!"), None);
+            assert_eq!(super::local_path("/home/a/osu!"), Some("/home/a/osu!".into()));
+        }
+        assert_eq!(super::local_path(""), None);
+    }
+
+    #[test]
+    fn dashboard() {
+        assert_eq!(super::dashboard_value("A=1\nOPEN_DASHBOARD_ON_STARTUP=true\n"), Some(true));
+        assert_eq!(super::dashboard_value("OPEN_DASHBOARD_ON_STARTUP=true\nOPEN_DASHBOARD_ON_STARTUP = 'false'"), Some(false));
+        assert_eq!(super::dashboard_value("OPEN_DASHBOARD_ON_STARTUP=TRUE"), Some(false));
+        assert_eq!(super::dashboard_value("DEBUG_LOG=true"), None);
+        assert_eq!(super::with_dashboard("", false), "OPEN_DASHBOARD_ON_STARTUP=false\n");
+        assert_eq!(super::with_dashboard("A=1\r\nOPEN_DASHBOARD_ON_STARTUP=true\r\n\r\nB=2", false), "A=1\r\nOPEN_DASHBOARD_ON_STARTUP=false\r\n\r\nB=2");
+        assert_eq!(super::with_dashboard("A=1\n", true), "A=1\nOPEN_DASHBOARD_ON_STARTUP=true\n");
+    }
+
     #[test]
     fn quoting() {
         assert_eq!(super::shell_quote("/home/a/.local/bin/tosu"), "/home/a/.local/bin/tosu");

@@ -103,8 +103,12 @@ until you turn plays back on.
 
 "Open tosu with Hashi" is off by default. With it on, the app starts tosu in the
 background when it opens and stops it again when it closes. Getting tosu through the app turns
-this on for you. It looks for tosu in the usual places. If yours is somewhere else, set the
+this on for you. It looks for tosu in the usual places, and remembers where tosu was the last time
+it saw it running. If yours is somewhere else and you've never had it open alongside Hashi, set the
 `TOSU_PATH` environment variable to the full path of the tosu program.
+
+With it on, "Open its dashboard too" picks whether tosu opens its dashboard in your browser each
+time it starts. It changes tosu's own setting, so it counts however tosu is started.
 
 "Open Hashi on startup" is off by default. With it on, the app starts with your
 computer and goes straight to the tray, so it's already running when you play.
@@ -112,7 +116,7 @@ computer and goes straight to the tray, so it's already running when you play.
 "Start in the tray" is off by default. With it on, opening the app only puts its icon in the tray.
 Click the icon, or open the app again, to see the window.
 
-"Show dans" hides the dan next to each play's MSD, for anyone who'd rather not see an estimate.
+"Show dans" shows or hides the dan next to each play's MSD.
 The theme color has the same presets and sliders as Mania Tracker.
 
 Disconnect signs the app out and revokes its access. You can also remove it from your connected

@@ -9,6 +9,9 @@ pub struct Config {
     pub key: Option<Key>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settings: Option<Settings>,
+    // the last tosu seen running, it can be anywhere
+    #[serde(default, rename = "tosuPath", skip_serializing_if = "Option::is_none")]
+    pub tosu_path: Option<std::path::PathBuf>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]

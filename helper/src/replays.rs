@@ -29,6 +29,7 @@ pub(crate) struct Replays {
     fresh: Vec<Fresh>,
     // Data/r's mtime at the last full look
     dir_stamp: Option<std::time::SystemTime>,
+    dir: Option<PathBuf>,
     // path -> mtime
     seen_lazer: HashMap<PathBuf, i64>,
     fresh_lazer: Vec<Fresh>,
@@ -63,11 +64,22 @@ fn mtime_ms(meta: &std::fs::Metadata) -> f64 {
 fn scan_replay_dir(b: &Arc<Bridge>, initial: bool) {
     // a new file bumps the folder's mtime. a second one in the same tick wouldn't, so a fresh
     // mtime gets looked at again
-    let Ok(stamp) = std::fs::metadata(&b.env.replay_dir).and_then(|m| m.modified()) else { return };
+    let path = b.replay_dir();
+    // once tosu says where stable is, what's already in there is old
+    let initial = {
+        let mut s = b.st();
+        let moved = s.replays.dir.as_ref() != Some(&path);
+        if moved {
+            s.replays.dir = Some(path.clone());
+            s.replays.dir_stamp = None;
+        }
+        initial || moved
+    };
+    let Ok(stamp) = std::fs::metadata(&path).and_then(|m| m.modified()) else { return };
     if b.st().replays.dir_stamp == Some(stamp) {
         return;
     }
-    let Ok(dir) = std::fs::read_dir(&b.env.replay_dir) else { return };
+    let Ok(dir) = std::fs::read_dir(&path) else { return };
     let names: Vec<String> = dir.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
     let settled = stamp.elapsed().is_ok_and(|d| d > Duration::from_secs(2));
     let mut s = b.st();
@@ -86,7 +98,7 @@ fn scan_replay_dir(b: &Arc<Bridge>, initial: bool) {
             log!("ignore {name}: its time is not recent (an imported replay?)");
             continue;
         }
-        s.replays.fresh.push(Fresh { name, path: None, md5, at: ended_at, seen_at: now_ms() });
+        s.replays.fresh.push(Fresh { path: Some(path.join(&name)), name, md5, at: ended_at, seen_at: now_ms() });
     }
 }
 
@@ -236,7 +248,7 @@ fn closest_replay<'a>(pool: &[Fresh], item: &Item, others: impl Iterator<Item = 
 }
 
 async fn attach_replay(b: &Arc<Bridge>, id: &str, file: Fresh) -> Result<(), String> {
-    let full = file.path.clone().unwrap_or_else(|| b.env.replay_dir.join(&file.name));
+    let full = file.path.clone().unwrap_or_else(|| b.replay_dir().join(&file.name));
     // osu! might still be writing it: same size and time twice in a row, then read it once
     let stamp = || async {
         let st = tokio::fs::metadata(&full).await.map_err(|e| e.to_string())?;
@@ -335,7 +347,7 @@ async fn find_chart(b: &Arc<Bridge>, md5: &str, set: Option<i64>, title: Option<
         Some(i) => i,
         None => crate::read_json_file(&b.env.chart_index_file).await.and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default(),
     };
-    let songs = b.env.songs_dir.clone();
+    let songs = b.songs_dir();
     let md5 = md5.to_string();
     let (found, index, dirty) = tokio::task::spawn_blocking(move || search_songs(&songs, &md5, set, title, index))
         .await
@@ -402,8 +414,17 @@ async fn keep_blob(b: &Bridge, bytes: &[u8]) -> Result<Blob, String> {
     let digest = sha256_hex(bytes);
     let file = b.env.blob_dir.join(&digest);
     crate::create_private_dir(&b.env.blob_dir).await.map_err(|e| e.to_string())?;
+    // whole or not there, a half-written one would be kept for good
     if !file.exists() {
-        crate::write_private(&file, bytes).await.map_err(|e| e.to_string())?;
+        let tmp = file.with_extension("tmp");
+        let written = match crate::write_private(&tmp, bytes).await {
+            Ok(()) => tokio::fs::rename(&tmp, &file).await,
+            Err(e) => Err(e),
+        };
+        if let Err(e) = written {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            return Err(e.to_string());
+        }
     }
     Ok(Blob {
         sha256: digest,
@@ -462,7 +483,7 @@ pub(crate) async fn cover_file(b: &Arc<Bridge>, item: &Item) -> Option<PathBuf> 
         let file = root.join(&cover.file);
         return (no_dots(&cover.file) && inside(&root, &file)).then_some(file);
     }
-    let songs = &b.env.songs_dir;
+    let songs = &b.songs_dir();
     let mut tries: Vec<PathBuf> = vec![];
     if let Some(cover) = &item.play.cover {
         if let Some(folder) = &cover.folder {

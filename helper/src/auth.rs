@@ -569,6 +569,8 @@ async fn exchange_code(b: &Arc<Bridge>, caps: &Value, code: &str, verifier: &str
         }
         s.access_token = payload.get("access_token").and_then(Value::as_str).map(String::from);
         s.access_expires_at = now_ms() + payload.get("expires_in").and_then(Value::as_i64).unwrap_or(300) * 1000;
+        // boards hold the last account's own row
+        s.boards = Default::default();
         s.config.connection = Some(Connection {
             issuer: caps.get("issuer").cloned().unwrap_or(Value::Null),
             environment: caps.get("environment").cloned().unwrap_or(Value::Null),
@@ -684,6 +686,7 @@ pub(crate) async fn disconnect(b: &Arc<Bridge>) {
     {
         let mut s = b.st();
         s.config.connection = None;
+        s.boards = Default::default();
         s.config.key = None;
         s.signing_key = None;
         s.access_token = None;
@@ -706,10 +709,9 @@ pub(crate) async fn check_connection(b: &Arc<Bridge>) {
             set_connection(b, "disabled", Some("Score import is switched off on this server.".into()));
             return Ok(());
         }
-        let (issuer, environment) = {
-            let s = b.st();
-            let c = s.config.connection.as_ref().unwrap();
-            (c.issuer.clone(), c.environment.clone())
+        // disconnected while caps was asked for
+        let Some((issuer, environment)) = b.st().config.connection.as_ref().map(|c| (c.issuer.clone(), c.environment.clone())) else {
+            return Ok(());
         };
         let want_issuer = caps.get("issuer").cloned().unwrap_or(Value::Null);
         if issuer != want_issuer || Some(&environment) != caps.get("environment").or(Some(&Value::Null)) {

@@ -309,6 +309,10 @@ html, .framed main { overflow-x: hidden; }
 .setting .reset:disabled { opacity: 0.4; cursor: default; }
 .settings .group { margin: 22px 0 2px; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--osu-f1); }
 .group + .setting::before { display: none; }
+/* part of the setting above it */
+.setting.sub { margin-top: -8px; padding: 0 0 14px 16px; }
+.setting.sub::before { display: none; }
+.setting.sub .title { font-size: 13px; font-weight: 500; }
 .switch.locked { opacity: 0.6; cursor: default; }
 .swatches { display: grid; grid-template-columns: repeat(12, 1fr); gap: 6px; }
 .swatch {
@@ -417,6 +421,30 @@ html, .framed main { overflow-x: hidden; }
 .shore .line, .shore .fish { fill: none; stroke: var(--osu-b3); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .shore .fish circle { fill: var(--osu-b3); stroke: none; }
 .shore .sunk { opacity: 0.45; }
+.shore { position: relative; }
+
+/* ko-fi: a boat with a coffee, moored under the settings */
+.kofi-dock { position: absolute; left: 50%; top: -20px; display: flex; align-items: center; gap: 4px; transform: translateX(-50%); pointer-events: auto; }
+.kofi { display: block; }
+.kofi svg { display: block; overflow: visible; }
+.kofi .hull { fill: var(--osu-b5); stroke: var(--ink); stroke-width: 2; stroke-linejoin: round; }
+.kofi .plank { fill: none; stroke: var(--osu-b1); stroke-width: 1.5; stroke-linecap: round; }
+.kofi .cup { fill: #fff; stroke: var(--ink); stroke-width: 2; stroke-linejoin: round; }
+.kofi .handle { fill: none; stroke: #fff; stroke-width: 3; stroke-linecap: round; }
+.kofi .heart, .kofi .flag { fill: var(--osu-pink); }
+.kofi .mast { fill: none; stroke: var(--ink); stroke-width: 2; stroke-linecap: round; }
+.kofi .flag { transform-origin: 64px 13px; animation: flutter 900ms steps(3) infinite; }
+@keyframes flutter { 50% { transform: scaleX(0.82) skewY(4deg); } }
+.kofi .ripples path { fill: none; stroke: var(--osu-b1); stroke-width: 1.5; stroke-linecap: round; }
+.kofi .ripples { animation: ripple steps(4) infinite; }
+@keyframes ripple { 50% { transform: translateX(3px); opacity: 0.5; } }
+.kofi .steam path { fill: none; stroke: var(--ink); stroke-width: 2; stroke-linecap: round; animation: steam steps(8) infinite; }
+.kofi .boat { transform-origin: 36px 46px; animation: boat-bob steps(8) infinite; }
+@keyframes boat-bob { 0%, 100% { transform: rotate(-3deg); } 50% { transform: translateY(2px) rotate(3deg); } }
+@keyframes steam { 0% { opacity: 0; transform: translateY(4px); } 30% { opacity: 1; } 100% { opacity: 0; transform: translateY(-6px); } }
+.kofi:hover .boat, .kofi-dock:hover .boat { transform: translateY(-3px); animation-play-state: paused; }
+.kofi-say { margin-top: 6px; font-size: 12px; font-weight: 600; color: var(--osu-f1); text-decoration: none; }
+.kofi-dock:hover .kofi-say { color: #fff; text-decoration: underline wavy var(--accent) 1.5px; text-underline-offset: 2px; }
 
 /* the fill is its own layer so it can wobble and the label can't */
 .primary {
@@ -453,13 +481,14 @@ html, .framed main { overflow-x: hidden; }
   .note, .splash { display: none; }
   .stamp { animation: none; }
   .scene *, .bed *, .shore * { animation: none !important; }
+  .kofi .steam path { opacity: 0.8; }
 }
 
 .note { margin: 0; font-size: 13px; color: var(--osu-f1); text-align: center; }
 .note a, .note button.link { color: var(--osu-f1); }
 .note a:hover, .note button.link:hover { color: #fff; }
 
-button.link {
+button.link, a.link {
   border: 0;
   padding: 0;
   background: none;
@@ -610,10 +639,10 @@ a.title:hover, a.title:focus-visible, .who .name .profile:hover, .who .name .pro
 .facts { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 12px; font-weight: 600; white-space: nowrap; }
 .facts > * { flex-shrink: 0; }
 .facts > :first-child { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.facts > * + *::before { content: "·"; margin-right: 6px; color: var(--osu-b1); }
+.facts > * + *::before { content: ""; display: inline-block; width: 2px; height: 11px; margin: 0 8px 0 2px; border-radius: 1px; background: var(--osu-b1); transform: rotate(20deg); vertical-align: -1px; filter: url(#ink2); }
 .facts .mods { display: inline-flex; align-items: center; gap: 3px; }
 .play .detail { margin-top: 3px; font-size: 12px; color: var(--osu-f1); }
-.rating { display: flex; align-items: center; gap: 8px; margin-top: 5px; font-size: 12px; color: var(--osu-f1); white-space: nowrap; }
+.rating { display: flex; align-items: center; gap: 8px; margin-top: 5px; font-size: 12px; color: var(--osu-f1); white-space: nowrap; overflow-x: clip; }
 .rating .msd b { font-size: 13px; color: var(--accent); }
 .rating .dan { position: relative; padding: 1px 7px; font-weight: 700; color: var(--accent); }
 .rating .dan::before {
@@ -764,7 +793,7 @@ a.title:hover, a.title:focus-visible, .who .name .profile:hover, .who .name .pro
 .grade.d { color: #ff5a5a; }
 .standing .avatar { flex-shrink: 0; width: 26px; height: 26px; border-radius: 9999px; background: var(--osu-b3); overflow: hidden; }
 .standing .avatar img { display: block; width: 100%; height: 100%; object-fit: cover; }
-.standing .player { min-width: 0; overflow: hidden; padding-bottom: 4px; margin-bottom: -4px; font-weight: 600; white-space: nowrap; text-overflow: ellipsis; color: inherit; text-decoration: none; outline: none; }
+.standing .player { min-width: 3em; overflow: hidden; padding-bottom: 4px; margin-bottom: -4px; font-weight: 600; white-space: nowrap; text-overflow: ellipsis; color: inherit; text-decoration: none; outline: none; }
 .standing .player:hover, .standing .player:focus-visible, .board .map a.title:hover { text-decoration: underline wavy var(--accent) 1.5px; text-underline-offset: 1px; }
 .standing .app { flex-shrink: 0; width: 14px; height: 14px; }
 .standing .mods { display: inline-flex; flex-shrink: 0; gap: 3px; margin-left: auto; }
@@ -773,3 +802,6 @@ a.title:hover, a.title:focus-visible, .who .name .profile:hover, .who .name .pro
 .board .map .facts { margin-top: 3px; }
 .board .map .players { font-weight: 500; color: var(--osu-f1); }
 .standing .rate { width: 40px; flex-shrink: 0; font-size: 12px; font-weight: 600; color: var(--osu-f1); text-align: right; }
+@media (max-width: 420px) {
+  .standing .when { display: none; }
+}

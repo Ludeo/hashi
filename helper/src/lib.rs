@@ -363,9 +363,19 @@ impl Bridge {
             "tosuAutostart": self.env.tosu_can_start.then(|| s.config.settings.as_ref().is_some_and(|x| x.tosu_autostart)),
             "startInTray": self.opts.tray.then(|| s.config.settings.as_ref().is_some_and(|x| x.start_in_tray)),
             "sendPlays": !s.sends_no_plays(),
+            "tosuDashboard": self.env.tosu_can_start.then_some(s.tosu.dashboard).flatten(),
             "showDans": !s.config.settings.as_ref().is_some_and(|x| x.hide_dans),
             "plays": items.into_iter().map(|i| queue::public_item(i, &self.env.origin, profile.as_deref())).collect::<Vec<_>>(),
         })
+    }
+
+    // where tosu says stable is, it can be installed anywhere
+    pub(crate) fn replay_dir(&self) -> PathBuf {
+        self.st().tosu.stable_dirs.as_ref().map(|(game, _)| game.join("Data").join("r")).unwrap_or_else(|| self.env.replay_dir.clone())
+    }
+
+    pub(crate) fn songs_dir(&self) -> PathBuf {
+        self.st().tosu.stable_dirs.as_ref().map(|(_, songs)| songs.clone()).unwrap_or_else(|| self.env.songs_dir.clone())
     }
 
     pub fn theme(&self) -> (u16, u8) {
@@ -548,7 +558,17 @@ pub(crate) async fn write_private(file: &Path, bytes: &[u8]) -> std::io::Result<
     o.mode(0o600);
     let mut f = o.open(file).await?;
     f.write_all(bytes).await?;
-    f.flush().await
+    // on disk before it's renamed over the old one, or a crash can leave an empty file
+    f.sync_all().await
+}
+
+// a file that's there but unreadable is set aside, not written over with an empty one
+async fn keep_broken(file: &Path) {
+    if tokio::fs::metadata(file).await.is_ok_and(|m| m.len() > 0) {
+        let to = file.with_extension(format!("broken-{}.json", now_ms()));
+        log!("{} can't be read, kept as {}", file.display(), to.display());
+        let _ = tokio::fs::rename(file, &to).await;
+    }
 }
 
 pub async fn start(opts: Options) -> Result<Arc<Bridge>, String> {
@@ -565,11 +585,23 @@ pub async fn start(opts: Options) -> Result<Arc<Bridge>, String> {
     if opts.log_file {
         open_log_file(&env.data_dir);
     }
-    let config: Config = read_json_file(&env.config_file)
-        .await
-        .and_then(|v| serde_json::from_value(v).ok())
-        .unwrap_or_default();
-    let mut queue = read_json_file(&env.queue_file).await.map(Queue::from_value).unwrap_or_default();
+    let config: Config = match read_json_file(&env.config_file).await.map(serde_json::from_value) {
+        Some(Ok(c)) => c,
+        Some(Err(e)) => {
+            log!("config.json can't be read ({e}), starting over");
+            keep_broken(&env.config_file).await;
+            Config::default()
+        }
+        None => {
+            keep_broken(&env.config_file).await;
+            Config::default()
+        }
+    };
+    let queue = read_json_file(&env.queue_file).await;
+    if queue.is_none() {
+        keep_broken(&env.queue_file).await;
+    }
+    let mut queue = queue.map(Queue::from_value).unwrap_or_default();
 
     // can't match these after a restart
     for item in &mut queue.items {
@@ -669,6 +701,10 @@ pub async fn start(opts: Options) -> Result<Arc<Bridge>, String> {
         let mut minute = tokio::time::interval(Duration::from_secs(60));
         let mut five = tokio::time::interval(Duration::from_secs(5));
         let mut tick = tokio::time::interval(Duration::from_millis(presence::PRESENCE_TICK_MS));
+        // not every tick missed while the computer slept, all at once
+        for t in [&mut minute, &mut five, &mut tick] {
+            t.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        }
         minute.tick().await;
         let mut minutes = 0u32;
         loop {
@@ -693,6 +729,7 @@ pub async fn start(opts: Options) -> Result<Arc<Bridge>, String> {
                         queue::wake_queue(&b, 0);
                     }
                     tosu::recheck_found(&b);
+                    tosu::refresh_dashboard(&b);
                 }
                 _ = five.tick() => {
                     let b = b.clone();

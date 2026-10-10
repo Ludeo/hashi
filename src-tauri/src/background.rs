@@ -169,7 +169,7 @@ fn open(opening: bool) {
         return;
     }
     let Some(bridge) = BRIDGE.get() else { return };
-    let exe = match std::env::current_exe() {
+    let exe = match tauri::utils::platform::current_exe() {
         Ok(exe) => exe,
         Err(e) => return log!("could not open the window: {e}"),
     };
@@ -284,7 +284,8 @@ impl Updater for WindowUpdater {
 fn start_again() {
     let exe = match std::env::var_os("APPIMAGE").filter(|p| !p.is_empty()) {
         Some(p) => std::path::PathBuf::from(p),
-        None => match std::env::current_exe() {
+        // the one it started from: once a .deb or .rpm replaced it, linux's own answer ends in " (deleted)"
+        None => match tauri::utils::platform::current_exe() {
             Ok(exe) => exe,
             Err(e) => return log!("could not start the new version: {e}"),
         },

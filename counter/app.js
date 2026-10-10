@@ -310,7 +310,30 @@ function riverbed() {
   return node;
 }
 
-function shore() {
+const KOFI = "https://ko-fi.com/aleju03";
+const BOB_KOFI_MS = 3200;
+const STEAM_MS = 2600;
+
+// moored on the shore under the settings
+function kofi() {
+  const node = el("a", { class: "kofi", href: KOFI, target: "_blank", rel: "noreferrer", title: "Support on Ko-fi" });
+  node.innerHTML = `<svg viewBox="0 0 92 60" width="110" height="72" aria-hidden="true"><g class="ink">
+    <g class="ripples" style="${loop(BOB_KOFI_MS)}"><path d="M-6 47q4-3 8 0t8 0"/><path d="M76 47q4-3 8 0t8 0"/></g>
+    <g class="boat" style="${loop(BOB_KOFI_MS)}">
+      <path class="mast" d="M64 39V9"/>
+      <path class="flag" d="M64 9l15 4.5l-15 4.5z"/>
+      <g class="steam"><path d="M31 15q-3-4 0-7t0-7" style="${loop(STEAM_MS)}"/><path d="M39 16q3-4 0-7t1-7" style="${loop(STEAM_MS, 0.5)}"/></g>
+      <path class="cup" d="M24 19h22v12q0 7-7 7h-8q-7 0-7-7z"/>
+      <path class="handle" d="M46 22q7 0 7 5t-7 5"/>
+      <path class="heart" d="M35 32q-6-4-6-7.5q0-3 3-3q2 0 3 2q1-2 3-2q3 0 3 3q0 3.5-6 7.5z"/>
+      <path class="hull" d="M3 37q36 5 72 0l-8 13q-28 4-56 0z"/>
+      <path class="plank" d="M11 44q28 3 56 0"/>
+    </g>
+  </g></svg>`;
+  return el("span", { class: "kofi-dock" }, node, el("a", { class: "kofi-say", href: KOFI, target: "_blank", rel: "noreferrer" }, "Support on Ko-fi"));
+}
+
+function shore(boat = false) {
   const node = el("div", { class: "shore" });
   const width = Math.max(innerWidth, 400);
   // as wide as the window could ever get
@@ -331,6 +354,7 @@ function shore() {
       </svg>
     </svg>
   </g></svg>`;
+  if (boat) node.append(kofi());
   return node;
 }
 
@@ -460,7 +484,7 @@ function danName(d) {
 function rankButton(p) {
   if (!p.url || !p.md5) return null;
   const r = p.rank;
-  const open = () => openBoard({ md5: p.md5, artist: p.play.artist, title: p.play.title, version: p.play.version, keys: p.play.keys }, false, r?.position, r ?? modVariant(modList(p.play.mods)));
+  const open = () => openBoard({ md5: p.md5, artist: p.play.artist, title: p.play.title, version: p.play.version, keys: p.play.keys }, false, !!r, r ?? modVariant(modList(p.play.mods)));
   if (!r) return el("button", { class: "link act board-link", onclick: open }, "Leaderboard");
   return el("button", {
     class: `rank${r.best ? "" : " off"}`,
@@ -484,8 +508,9 @@ function rating(p) {
     }, danName(r.dan)));
 }
 
-// a page of plays sized to the window, so a long session doesn't turn into a long scroll
-const ROW_PX = 90;
+// a page of plays sized to the window, so a long session doesn't turn into a long scroll. a row with
+// its rating, most rows have one
+const ROW_PX = 106;
 const PAGER_PX = 40;
 let perPage = 5;
 let page = 0;
@@ -520,7 +545,8 @@ function fitPage() {
   const scroller = document.documentElement.classList.contains("framed") ? app : document.scrollingElement;
   const room = innerHeight - (list.getBoundingClientRect().top + scroller.scrollTop) - PAGER_PX - shore.offsetHeight;
   if (list.classList.contains("standings")) {
-    const fit = Math.max(5, Math.floor((room - (list.querySelector(".mine")?.offsetHeight ?? 0)) / STANDING_PX));
+    const mine = list.querySelector(".mine");
+    const fit = Math.max(5, Math.floor((room - (mine ? mine.offsetHeight + parseFloat(getComputedStyle(mine).marginTop) : 0)) / STANDING_PX));
     if (fit === board.perPage) return;
     board.page = Math.floor(board.page * board.perPage / fit);
     board.perPage = fit;
@@ -547,11 +573,12 @@ function modVariant(mods) {
   return { speed: has("HT", "DC") ? "ht" : has("DT", "NC") ? "dt" : null, mods: ["HO", "IN", "NR"].filter((m) => has(m)) };
 }
 
-// at: a position to open on the page of, a play's rank
-function openBoard(map, follow = false, at = null, variant = map) {
+// mine: open on the page with your own row
+function openBoard(map, follow = false, mine = false, variant = map) {
   settingsOpen = false;
+  clearTimeout(boardTimer);
   board = {
-    map, follow, at, md5: map.md5, speed: variant.speed ?? null, mods: variant.mods ?? [],
+    map, follow, mine, md5: map.md5, speed: variant.speed ?? null, mods: variant.mods ?? [],
     data: null, error: null, page: 0, perPage: board?.perPage ?? 8, seen: acceptedOn(map.md5),
   };
   loadBoard();
@@ -570,11 +597,15 @@ function acceptedOn(md5) {
 
 async function loadBoard() {
   const want = board;
+  if (!want) return;
+  // a following board changes in place, only the last ask counts
+  const ask = want.asked = (want.asked ?? 0) + 1;
+  const current = () => board === want && want.asked === ask;
   want.loading = true;
   try {
     const res = await fetch(`${BRIDGE}/leaderboard/${boardKey(want)}`);
     const body = await res.json().catch(() => ({}));
-    if (board !== want) return;
+    if (!current()) return;
     if (res.ok) {
       want.data = body;
       want.error = null;
@@ -582,10 +613,11 @@ async function loadBoard() {
       want.error = body.error ?? "Couldn't load the leaderboard.";
     }
   } catch {
-    if (board === want) want.error = "Lost Hashi's helper.";
+    if (current()) want.error = "Lost Hashi's helper.";
   }
+  if (!current()) return;
   want.loading = false;
-  if (board === want) render();
+  render();
 }
 
 // called on every render, follows the selection and new plays on the map
@@ -600,6 +632,8 @@ function boardChanged() {
     board.data = board.error = null;
     board.page = 0;
     board.seen = acceptedOn(selected.md5);
+    // whatever is on its way is for the map before
+    board.asked = (board.asked ?? 0) + 1;
     clearTimeout(boardTimer);
     // scrolling through song select shouldn't ask for every map on the way
     boardTimer = setTimeout(loadBoard, 500);
@@ -678,14 +712,14 @@ function boardView() {
   } else {
     const pages = Math.ceil(data.entries.length / board.perPage);
     // kept until the page is turned, the page size can still change once it's drawn
-    const at = data.entries.findIndex((e) => e.position === board.at);
+    const at = board.mine ? data.entries.findIndex((e) => e.username === snapshot.connection.username) : -1;
     if (at >= 0) board.page = Math.floor(at / board.perPage);
     board.page = Math.max(0, Math.min(board.page, pages - 1));
     const from = board.page * board.perPage;
     const shown = data.entries.slice(from, from + board.perPage);
     const turn = (by) => () => {
       board.page += by;
-      board.at = null;
+      board.mine = false;
       render();
     };
     body = el("div", { class: "history" },
@@ -884,6 +918,8 @@ function settings(c, host, reconnect) {
   const computer = [
     t != null && toggle("Open tosu with Hashi", t, "tosu-autostart", tosuNote,
       t && ["missing", "failed"].includes(launch) ? " is-error" : ""),
+    t && snapshot.tosuDashboard != null && toggle("Open its dashboard too", snapshot.tosuDashboard, "tosu-dashboard",
+      "In your browser, each time tosu starts.", " sub"),
     snapshot.autostart != null && toggle("Open Hashi on startup", snapshot.autostart, "autostart"),
     snapshot.startInTray != null && toggle("Start in the tray", snapshot.startInTray, "start-in-tray"),
   ].filter(Boolean);
@@ -903,16 +939,20 @@ function settings(c, host, reconnect) {
         : el("button", { class: "key danger", disabled: slow, onclick: () => action("disconnect") }, "Disconnect")),
     computer.length > 0 && [el("p", { class: "group" }, "This computer"), ...computer],
     el("p", { class: "group" }, "Look"),
-    snapshot.showDans != null && toggle("Show dans", snapshot.showDans, "show-dans", "The dan next to a play's MSD. It's a rough estimate."),
+    snapshot.showDans != null && toggle("Show dans", snapshot.showDans, "show-dans", "The dan next to a play's MSD."),
     snapshot.theme && themeSetting(),
     el("p", { class: "about" }, `Hashi ${snapshot.version}`,
       snapshot.update && !snapshot.update.step
-        && [" · ", el("button", { class: "link", disabled: slow, onclick: getUpdate }, `${snapshot.update.install ? "Update to" : "Get"} ${snapshot.update.version}`)]));
+        && [" · ", el("button", { class: "link", disabled: slow, onclick: getUpdate }, `${snapshot.update.install ? "Update to" : "Get"} ${snapshot.update.version}`)],
+));
 }
 
 function toggleSettings() {
   settingsOpen = !settingsOpen;
-  if (settingsOpen) board = null;
+  if (settingsOpen) {
+    board = null;
+    clearTimeout(boardTimer);
+  }
   lockedHint = null;
   render();
 }
@@ -1036,6 +1076,7 @@ function render() {
   if (!atHome) {
     settingsOpen = false;
     board = null;
+    clearTimeout(boardTimer);
   }
   boardChanged();
 
@@ -1046,12 +1087,14 @@ function render() {
   }
 
   if (atHome) {
-    app.append(el("div", { class: "ground" }, home(c, host), shore()));
+    app.append(el("div", { class: "ground" }, home(c, host), shore(settingsOpen)));
     fitPage();
     return;
   }
 
   const connecting = c.status === "connecting";
+  // it comes from the site's discovery document
+  const again = /^https?:\/\//.test(c.authorizeUrl ?? "") ? c.authorizeUrl : null;
   const full = !snapshot.plays.length;
   const river = crossAt ? [
     el("p", { class: "say" }, "Connected as ", c.username, "."),
@@ -1071,8 +1114,7 @@ function render() {
       host && el("span", { class: "host" }, host)),
     connecting
       ? el("p", { class: "note" },
-          c.authorizeUrl && el("a", { href: c.authorizeUrl, target: "_blank", rel: "noreferrer" }, "Open the page again"),
-          c.authorizeUrl && " · ",
+          again && [el("a", { href: again, target: "_blank", rel: "noreferrer" }, "Open the page again"), " · "],
           el("button", { class: "link", onclick: () => action("cancel") }, "Cancel"))
       : c.message && el("p", { class: "note" }, c.message),
     update(),

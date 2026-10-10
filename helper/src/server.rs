@@ -207,6 +207,12 @@ async fn route(b: &Arc<Bridge>, req: Request, has_origin: bool) -> Response<Body
             let live_saved = presence::set_presence_setting(b, live).await;
             return saved(b, plays_saved && live_saved);
         }
+        if path == "/tosu-dashboard/on" || path == "/tosu-dashboard/off" {
+            return match tosu::set_dashboard(b, path == "/tosu-dashboard/on").await {
+                Ok(()) => json(200, &b.snapshot()),
+                Err(e) => json(500, &serde_json::json!({ "error": e })),
+            };
+        }
         if path == "/show-dans/on" || path == "/show-dans/off" {
             let ok = b.set_show_dans(path == "/show-dans/on").await;
             return saved(b, ok);

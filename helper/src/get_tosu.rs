@@ -71,6 +71,7 @@ pub(crate) fn start(b: &Arc<Bridge>) {
                     }
                 }
                 tosu::set_tosu_autostart(&b2, true).await;
+                tosu::refresh_dashboard(&b2);
             }
             Err(e) => {
                 log!("getting tosu failed: {e}");
