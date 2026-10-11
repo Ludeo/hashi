@@ -67,8 +67,9 @@ pub(crate) struct TosuState {
     last_play: Option<LastPlay>,
     last_result_shown: Option<String>,
     viewed_result: Option<String>,
-    // results of the last play finished here, a retry starts from those
-    last_finished: Option<String>,
+    // the results up are from a play finished here, a retry starts from those. not by result_key,
+    // what tosu reads for them can change while they're up
+    own_results: bool,
     // started from the results of some other score: stable's local scores open there first
     pub replay: bool,
     pending_finish: Option<PendingFinish>,
@@ -100,7 +101,7 @@ impl TosuState {
             last_play: None,
             last_result_shown: None,
             viewed_result: None,
-            last_finished: None,
+            own_results: false,
             replay: false,
             pending_finish: None,
             connected_at: 0,
@@ -238,7 +239,7 @@ fn on_tosu_message(b: &Arc<Bridge>, raw: Value) {
             if t.prev_state.as_deref() != Some("play") {
                 // retry or watch replay from results, remember which score was up
                 t.viewed_result = if t.prev_state.as_deref() == Some("resultScreen") { t.last_result_shown.clone() } else { None };
-                t.replay = t.viewed_result.is_some() && t.viewed_result != t.last_finished;
+                t.replay = t.prev_state.as_deref() == Some("resultScreen") && !t.own_results;
             }
             let null = Value::Null;
             let bm = raw.get("beatmap").unwrap_or(&null);
@@ -285,8 +286,10 @@ fn on_tosu_message(b: &Arc<Bridge>, raw: Value) {
             });
         }
 
-        if t.prev_state.as_deref() == Some("play") && state == "resultScreen" {
-            if let Some(play) = t.last_play.clone() {
+        if state == "resultScreen" && t.prev_state.as_deref() != Some("resultScreen") {
+            let finished = t.prev_state.as_deref() == Some("play");
+            t.own_results = finished && t.last_play.as_ref().is_some_and(|p| p.whose == "playing");
+            if let Some(play) = t.last_play.clone().filter(|_| finished) {
                 t.pending_finish = Some(PendingFinish { since: now_ms(), play, viewed: t.viewed_result.clone(), stale: t.last_result_shown.clone() });
             }
         }
@@ -297,9 +300,6 @@ fn on_tosu_message(b: &Arc<Bridge>, raw: Value) {
             let fresh = state == "resultScreen" && populated(&rs) && Some(result_key(&rs)) != pending.stale;
             if state != "resultScreen" || fresh || now_ms() - pending.since > 5000 {
                 let finish = t.pending_finish.take().unwrap();
-                if fresh && finish.play.whose == "playing" {
-                    t.last_finished = Some(result_key(&rs));
-                }
                 finished = Some((finish, fresh.then_some(rs)));
             }
         }
