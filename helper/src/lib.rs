@@ -268,6 +268,7 @@ pub(crate) struct State {
     pub queue: Queue,
     pub caps: Option<Value>,
     pub dpop_nonce: Option<String>,
+    pub direct_down_until: i64,
     pub access_token: Option<String>,
     pub access_expires_at: i64,
     pub signing_key: Option<p256::ecdsa::SigningKey>,
@@ -641,6 +642,7 @@ pub async fn start(opts: Options) -> Result<Arc<Bridge>, String> {
             queue,
             caps: None,
             dpop_nonce: None,
+            direct_down_until: 0,
             access_token: None,
             access_expires_at: 0,
             signing_key: None,
@@ -721,6 +723,15 @@ pub async fn start(opts: Options) -> Result<Arc<Bridge>, String> {
                             }
                         });
                     }
+                    // picks up a new api_base_url without a restart, keeps the old ones if the site is down
+                    if minutes % 60 == 0 {
+                        let b = b.clone();
+                        b.clone().spawn(async move {
+                            if let Err(e) = auth::load_capabilities(&b).await {
+                                log!("capabilities: {e}");
+                            }
+                        });
+                    }
                     let status = b.st().connection.status.clone();
                     if status == "offline" || status == "not_in_beta" {
                         let b = b.clone();
@@ -785,6 +796,7 @@ pub(crate) mod tests {
             queue: Default::default(),
             caps: None,
             dpop_nonce: None,
+            direct_down_until: 0,
             access_token: None,
             access_expires_at: 0,
             signing_key: None,

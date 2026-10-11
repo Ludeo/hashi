@@ -355,24 +355,22 @@ async fn read_receipt(b: &Arc<Bridge>, item: &mut Item) -> Result<Option<Value>,
     Ok(Some(body))
 }
 
-// only paths the server gave us, same origin
-async fn upload_url(b: &Arc<Bridge>, p: &Value) -> Result<String, Fail> {
-    let caps = auth::caps(b).await?;
-    let prefix = format!("{}/submissions/", caps.get("api_prefix").and_then(Value::as_str).unwrap_or(""));
+// only paths the server gave us, kept under submissions/ on whichever host serves the api
+fn upload_path(api_prefix: &str, p: &Value) -> Result<String, Fail> {
     let refuse = || Fail::Other(format!("Refusing upload path {}", crate::types::text(p)));
-    let p = p.as_str().filter(|p| p.starts_with(&prefix)).ok_or_else(refuse)?;
-    let issuer = url::Url::parse(caps.get("issuer").and_then(Value::as_str).unwrap_or("")).map_err(|_| refuse())?;
-    let url = issuer.join(p).map_err(|_| refuse())?;
-    if url.origin() != issuer.origin() {
+    let rest = p.as_str().and_then(|p| p.strip_prefix(api_prefix)).filter(|r| r.starts_with("/submissions/")).ok_or_else(refuse)?;
+    let plain = rest.bytes().all(|c| c.is_ascii_alphanumeric() || b"/_-.".contains(&c));
+    if !plain || rest.split('/').skip(1).any(|seg| seg.is_empty() || seg == "." || seg == "..") {
         return Err(refuse());
     }
-    Ok(url.to_string())
+    Ok(rest.to_string())
 }
 
 async fn upload(b: &Arc<Bridge>, item: &mut Item, path: &Value, blob: Option<Blob>) -> Result<Option<Value>, Fail> {
     let blob = blob.ok_or_else(|| Fail::Other("Nothing stored to upload.".into()))?;
     let bytes = replays::read_blob(b, &blob).await.map_err(Fail::Other)?;
-    let url = upload_url(b, path).await?;
+    let caps = auth::caps(b).await?;
+    let url = upload_path(caps.get("api_prefix").and_then(Value::as_str).unwrap_or(""), path)?;
     let req = Req {
         method: reqwest::Method::PUT,
         headers: vec![("content-type", "application/octet-stream".into())],
@@ -591,6 +589,25 @@ pub(crate) async fn prune_queue(b: &Arc<Bridge>) -> bool {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+
+    #[test]
+    fn upload_paths() {
+        let p = "/api/integrations/companella/v1";
+        let path = |v: &str| super::upload_path(p, &json!(v)).ok();
+        assert_eq!(path("/api/integrations/companella/v1/submissions/kf9PXHG_HhFN3Hvw-2lAQ/replay").as_deref(), Some("/submissions/kf9PXHG_HhFN3Hvw-2lAQ/replay"));
+        for bad in [
+            "/api/integrations/companella/v1/submissions/../../oauth/token",
+            "/api/integrations/companella/v1/submissions/%2e%2e/x",
+            "/api/integrations/companella/v1/submissions//x",
+            "/api/integrations/companella/v1/submissions/a?b=c",
+            "/api/integrations/companella/v1/me",
+            "https://evil.example/api/integrations/companella/v1/submissions/a/replay",
+            "/api/other/submissions/a/replay",
+        ] {
+            assert_eq!(path(bad), None, "{bad}");
+        }
+        assert!(super::upload_path(p, &json!(null)).is_err());
+    }
 
     #[test]
     fn play_links() {

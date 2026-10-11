@@ -171,6 +171,43 @@ pub(crate) fn api_base(caps: &Value) -> String {
     format!("{}{}", cap(caps, "issuer"), cap(caps, "api_prefix"))
 }
 
+// the backend's own host, so a stuck site doesn't hold up plays
+fn direct_base(caps: &Value) -> Option<String> {
+    let raw = caps.get("api_base_url").and_then(Value::as_str)?;
+    let u = url::Url::parse(raw).ok()?;
+    let fine = matches!(u.scheme(), "https" | "http") && u.host().is_some() && u.query().is_none() && u.fragment().is_none();
+    fine.then(|| raw.trim_end_matches('/').to_string())
+}
+
+const DIRECT_PAUSE_MS: i64 = 5 * 60_000;
+
+// direct first while it answers, the site always last
+fn routes(b: &Bridge, caps: &Value, path: &str, site: String) -> Vec<String> {
+    let mut urls = Vec::with_capacity(2);
+    if let Some(d) = direct_base(caps) {
+        if b.st().direct_down_until <= now_ms() {
+            urls.push(format!("{d}{path}"));
+        }
+    }
+    urls.push(site);
+    urls
+}
+
+// each proof is signed for the url it goes to, so falling back re-signs
+async fn send_routed(b: &Arc<Bridge>, urls: &[String], req: &Req, auth: bool) -> Result<Resp, Fail> {
+    let (site, direct) = urls.split_last().expect("the site is always there");
+    for url in direct {
+        match send(b, url, req, auth).await {
+            Ok(res) => return Ok(res),
+            Err(e) => {
+                b.st().direct_down_until = now_ms() + DIRECT_PAUSE_MS;
+                log!("api host: {e}, going through {} for {} min", b.env.origin, DIRECT_PAUSE_MS / 60_000);
+            }
+        }
+    }
+    send(b, site, req, auth).await
+}
+
 pub(crate) fn net_message(e: &reqwest::Error) -> String {
     let mut root: &dyn std::error::Error = e;
     while let Some(next) = root.source() {
@@ -237,7 +274,8 @@ pub(crate) async fn refresh_access(b: &Arc<Bridge>) -> Result<(), Fail> {
     };
     let caps = caps(b).await.map_err(|_| Fail::Conn("offline", format!("Could not reach {}.", b.env.origin)))?;
     let req = Req::json(reqwest::Method::POST, &json!({ "grant_type": "refresh_token", "refresh_token": refresh }));
-    let res = send(b, &cap(&caps, "token_endpoint"), &req, false)
+    let urls = routes(b, &caps, "/oauth/token", cap(&caps, "token_endpoint"));
+    let res = send_routed(b, &urls, &req, false)
         .await
         .map_err(|_| Fail::Conn("offline", format!("Could not reach {}.", b.env.origin)))?;
     let payload = res.json();
@@ -283,14 +321,16 @@ async fn ensure_access(b: &Arc<Bridge>) -> Result<(), Fail> {
     Ok(())
 }
 
-pub(crate) async fn api(b: &Arc<Bridge>, path_or_url: &str, req: Req) -> Result<Resp, Fail> {
+// path is relative to the api base, e.g. "/submissions"
+pub(crate) async fn api(b: &Arc<Bridge>, path: &str, req: Req) -> Result<Resp, Fail> {
     ensure_access(b).await?;
-    let url = if path_or_url.starts_with("http") { path_or_url.to_string() } else { format!("{}{path_or_url}", api_base(&caps(b).await?)) };
-    let mut res = send(b, &url, &req, true).await?;
+    let caps = caps(b).await?;
+    let route = || routes(b, &caps, path, format!("{}{path}", api_base(&caps)));
+    let mut res = send_routed(b, &route(), &req, true).await?;
     if res.status == 401 && res.json().pointer("/error/code").and_then(Value::as_str) == Some("token_expired") {
         b.st().access_token = None;
         refresh_access(b).await?;
-        res = send(b, &url, &req, true).await?;
+        res = send_routed(b, &route(), &req, true).await?;
     }
     Ok(res)
 }
@@ -548,9 +588,9 @@ async fn exchange_code(b: &Arc<Bridge>, caps: &Value, code: &str, verifier: &str
         reqwest::Method::POST,
         &json!({ "grant_type": "authorization_code", "code": code, "code_verifier": verifier, "client_id": CLIENT_ID, "redirect_uri": redirect_uri }),
     );
-    let token_endpoint = cap(caps, "token_endpoint");
+    let urls = routes(b, caps, "/oauth/token", cap(caps, "token_endpoint"));
     let res = tokio::select! {
-        res = send(b, &token_endpoint, &req, false) => res?,
+        res = send_routed(b, &urls, &req, false) => res?,
         _ = attempt.cancelled() => return Ok(false),
     };
     let payload = res.json();
@@ -675,7 +715,7 @@ pub(crate) async fn disconnect(b: &Arc<Bridge>) {
         let result = async {
             let caps = caps(b).await?;
             let req = Req::json(reqwest::Method::POST, &json!({ "token": token }));
-            send(b, &cap(&caps, "revocation_endpoint"), &req, false).await
+            send_routed(b, &routes(b, &caps, "/oauth/revoke", cap(&caps, "revocation_endpoint")), &req, false).await
         }
         .await;
         match result {
@@ -751,10 +791,37 @@ pub(crate) fn done_url(port: u16, ok: bool) -> String {
 mod tests {
     use super::*;
 
+    fn test_bridge(origin: &str) -> (Arc<Bridge>, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("mania-auth-test-{}", uuid::Uuid::new_v4()));
+        let mut env = Env::from_env();
+        env.origin = origin.into();
+        env.live_backend_url.clear();
+        env.data_dir = dir.clone();
+        env.config_file = dir.join("config.json");
+        env.queue_file = dir.join("queue.json");
+        env.chart_index_file = dir.join("chart-index.json");
+        env.blob_dir = dir.join("blobs");
+        let b = Arc::new(Bridge {
+            env,
+            opts: Default::default(),
+            st: Mutex::new(crate::tests::blank_state()),
+            http: reqwest::Client::builder().no_proxy().build().unwrap(),
+            rt: tokio::runtime::Handle::current(),
+            session_id: "test-session".into(),
+            session_started_at: iso_now(),
+            events: tokio::sync::broadcast::channel(64).0,
+            broadcast_pending: AtomicBool::new(false),
+            wake_gen: std::sync::atomic::AtomicU64::new(0),
+            queue_write: tokio::sync::Mutex::new(()),
+            config_write: tokio::sync::Mutex::new(()),
+        });
+        (b, dir)
+    }
+
     #[tokio::test]
     async fn disconnect_during_identity_allows_reconnect() {
         use axum::{body::Body, response::Response, routing::{get, post}, Router};
-        use tokio::sync::{broadcast, Notify};
+        use tokio::sync::Notify;
 
         let identity_started = Arc::new(Notify::new());
         let identity_release = Arc::new(Notify::new());
@@ -782,32 +849,10 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let origin = format!("http://{}", listener.local_addr().unwrap());
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let dir = std::env::temp_dir().join(format!("mania-auth-test-{}", uuid::Uuid::new_v4()));
-        let mut env = Env::from_env();
-        env.origin = origin.clone();
-        env.live_backend_url.clear();
-        env.data_dir = dir.clone();
-        env.config_file = dir.join("config.json");
-        env.queue_file = dir.join("queue.json");
-        env.chart_index_file = dir.join("chart-index.json");
-        env.blob_dir = dir.join("blobs");
         let caps = json!({ "issuer": origin, "api_prefix": "/api", "token_endpoint": format!("{origin}/token"), "revocation_endpoint": format!("{origin}/revoke") });
         // No background workers or browser: exercise the same exchange completion
         // task as start_connect, with a server that lets us hold /me in flight.
-        let b = Arc::new(Bridge {
-            env,
-            opts: Default::default(),
-            st: Mutex::new(crate::tests::blank_state()),
-            http: reqwest::Client::builder().no_proxy().build().unwrap(),
-            rt: tokio::runtime::Handle::current(),
-            session_id: "test-session".into(),
-            session_started_at: iso_now(),
-            events: broadcast::channel(64).0,
-            broadcast_pending: AtomicBool::new(false),
-            wake_gen: std::sync::atomic::AtomicU64::new(0),
-            queue_write: tokio::sync::Mutex::new(()),
-            config_write: tokio::sync::Mutex::new(()),
-        });
+        let (b, dir) = test_bridge(&origin);
         b.st().caps = Some(caps.clone());
 
         // First disconnect while /me is pending, then complete another sign-in.
@@ -848,6 +893,65 @@ mod tests {
         server.abort();
         let _ = server.await;
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn api_prefers_the_direct_host_and_falls_back_to_the_site() {
+        use axum::{http::HeaderMap, routing::get, Router};
+
+        async fn serve(app: Router) -> (String, tokio::task::JoinHandle<()>) {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let origin = format!("http://{}", listener.local_addr().unwrap());
+            (origin, tokio::spawn(async move { axum::serve(listener, app).await.unwrap() }))
+        }
+        // answers with who served it and the htu the proof was signed for
+        let me = |via: &'static str| {
+            get(move |h: HeaderMap| async move {
+                let proof = h.get("dpop").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+                let claims: Value = proof.split('.').nth(1).and_then(|p| B64.decode(p).ok()).and_then(|p| serde_json::from_slice(&p).ok()).unwrap_or(Value::Null);
+                let body = json!({ "via": via, "htu": claims["htu"] }).to_string();
+                axum::response::Response::builder().header("content-type", "application/json").body(axum::body::Body::from(body)).unwrap()
+            })
+        };
+        let (site, site_server) = serve(Router::new().route("/api/me", me("site"))).await;
+        let (direct, direct_server) = serve(Router::new().route("/v1/me", me("direct"))).await;
+        let closed = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            format!("http://{}", l.local_addr().unwrap())
+        };
+
+        let (b, dir) = test_bridge(&site);
+        {
+            let mut s = b.st();
+            s.config.key = Some(create_key());
+            s.access_token = Some("test-access".into());
+            s.access_expires_at = now_ms() + 3_600_000;
+        }
+        let call = |api_base_url: Value| {
+            let b = b.clone();
+            let site = site.clone();
+            async move {
+                b.st().caps = Some(json!({ "issuer": site, "api_prefix": "/api", "api_base_url": api_base_url }));
+                api(&b, "/me", Req::get()).await.ok().unwrap().json()
+            }
+        };
+
+        assert_eq!(call(Value::Null).await, json!({ "via": "site", "htu": format!("{site}/api/me") }));
+        assert_eq!(call(json!(format!("{direct}/v1/"))).await, json!({ "via": "direct", "htu": format!("{direct}/v1/me") }));
+
+        assert_eq!(call(json!(format!("{closed}/v1"))).await, json!({ "via": "site", "htu": format!("{site}/api/me") }));
+        assert!(b.st().direct_down_until > now_ms());
+        // stays on the site for a while, even once the direct host is back
+        assert_eq!(call(json!(format!("{direct}/v1"))).await["via"], json!("site"));
+        b.st().direct_down_until = 0;
+        assert_eq!(call(json!(format!("{direct}/v1"))).await["via"], json!("direct"));
+
+        for bad in [json!("ftp://x/v1"), json!("not a url"), json!("https://x/v1?a=b"), json!(5)] {
+            assert_eq!(direct_base(&json!({ "api_base_url": bad })), None);
+        }
+        site_server.abort();
+        direct_server.abort();
+        std::fs::remove_dir_all(dir).ok();
     }
 
     // node's crypto checks this one: KEY_PEM from node in, a proof out
