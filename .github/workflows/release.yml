@@ -25,7 +25,7 @@ jobs:
             bundles: appimage,deb,rpm
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: tag matches the version
         if: startsWith(github.ref, 'refs/tags/')
