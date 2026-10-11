@@ -44,7 +44,12 @@ On Linux:
 |---|---|
 | AppImage (any distro) | `chmod +x "Hashi_x.y.z_amd64.AppImage"`, then run it |
 | .deb (Debian, Ubuntu, Mint) | `sudo apt install "./Hashi_x.y.z_amd64.deb"` |
-| .rpm (Fedora, openSUSE) | `sudo dnf install "./Hashi-x.y.z-1.x86_64.rpm"` |
+| .rpm (Fedora) | `sudo dnf install "./Hashi-x.y.z-1.x86_64.rpm"` |
+| .rpm (openSUSE) | `sudo zypper install "./Hashi-x.y.z-1.x86_64.rpm"` |
+
+If the AppImage doesn't start and mentions `libfuse.so.2`, install FUSE 2: `sudo apt install
+libfuse2` on Ubuntu 22.04 and Debian, `sudo apt install libfuse2t64` on Ubuntu 24.04 and later,
+`sudo dnf install fuse-libs` on Fedora.
 
 The tray icon needs a desktop that shows tray icons (GNOME needs the AppIndicator extension).
 
