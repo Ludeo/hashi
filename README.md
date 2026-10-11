@@ -97,8 +97,8 @@ attaching to a report.
 
 ## Your data
 
-Settings, unsent plays, the log and the connection live in `%APPDATA%\mania-bridge` on Windows and
-`~/.config/mania-bridge` on Linux. Deleting that folder signs the app out and forgets unsent plays.
+Settings, unsent plays, the log and the connection live in `%APPDATA%\Hashi` on Windows and
+`~/.config/hashi` on Linux. Deleting that folder signs the app out and forgets unsent plays.
 Uninstall it the usual way; on Windows the uninstaller asks whether to delete your data too.
 
 ## License

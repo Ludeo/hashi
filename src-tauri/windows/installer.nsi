@@ -928,6 +928,7 @@ Section Uninstall
     RmDir /r "$APPDATA\${BUNDLEID}"
     RmDir /r "$LOCALAPPDATA\${BUNDLEID}"
     ; hashi: the app's own data. not BRIDGE_DATA_DIR, that could point anywhere
+    RmDir /r "$APPDATA\Hashi"
     RmDir /r "$APPDATA\mania-bridge"
     RmDir /r "$APPDATA\mania-bridge-test"
   ${EndIf}

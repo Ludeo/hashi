@@ -142,8 +142,8 @@ pub struct Env {
     // lazer keeps everything in files/<a>/<ab>/<sha256>, tosu tells us the real folder once it sees lazer
     pub lazer_dir: PathBuf,
     pub data_dir: PathBuf,
-    // where it lived as mania-bridge-test, moved over on first run
-    pub old_data_dir: Option<PathBuf>,
+    // where it lived before Hashi, newest first, moved over on first run
+    pub old_data_dirs: Vec<PathBuf>,
     pub config_file: PathBuf,
     pub queue_file: PathBuf,
     pub chart_index_file: PathBuf,
@@ -186,8 +186,11 @@ impl Env {
         } else {
             var("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or(home.join(".config"))
         };
-        let data_dir = var("BRIDGE_DATA_DIR").map(PathBuf::from).unwrap_or(config_root.join("mania-bridge"));
-        let old_data_dir = var("BRIDGE_DATA_DIR").is_none().then(|| config_root.join("mania-bridge-test"));
+        let data_dir = var("BRIDGE_DATA_DIR").map(PathBuf::from).unwrap_or(config_root.join(if cfg!(windows) { "Hashi" } else { "hashi" }));
+        let old_data_dirs = match var("BRIDGE_DATA_DIR") {
+            Some(_) => vec![],
+            None => vec![config_root.join("mania-bridge"), config_root.join("mania-bridge-test")],
+        };
         let counter_origins = HashSet::from([
             format!("http://127.0.0.1:{port}"),
             format!("http://localhost:{port}"),
@@ -198,12 +201,12 @@ impl Env {
             songs_dir: var("OSU_SONGS_DIR").map(PathBuf::from).unwrap_or(osu_dir.join("Songs")),
             osu_dir,
             lazer_dir,
-            config_file: data_dir.join("config.json"),
-            queue_file: data_dir.join("queue.json"),
-            chart_index_file: data_dir.join("chart-index.json"),
-            blob_dir: data_dir.join("blobs"),
-            data_dir,
-            old_data_dir,
+            config_file: PathBuf::new(),
+            queue_file: PathBuf::new(),
+            chart_index_file: PathBuf::new(),
+            blob_dir: PathBuf::new(),
+            data_dir: PathBuf::new(),
+            old_data_dirs,
             origin,
             tosu_host,
             live_backend_url,
@@ -213,6 +216,16 @@ impl Env {
             tosu_path: var("TOSU_PATH").map(PathBuf::from),
             update_check: var("UPDATE_CHECK").as_deref() != Some("0"),
         }
+        .with_data_dir(data_dir)
+    }
+
+    fn with_data_dir(mut self, dir: PathBuf) -> Self {
+        self.config_file = dir.join("config.json");
+        self.queue_file = dir.join("queue.json");
+        self.chart_index_file = dir.join("chart-index.json");
+        self.blob_dir = dir.join("blobs");
+        self.data_dir = dir;
+        self
     }
 
     pub fn counter_url(&self) -> String {
@@ -585,18 +598,23 @@ async fn keep_broken(file: &Path) {
 }
 
 pub async fn start(opts: Options) -> Result<Arc<Bridge>, String> {
-    let env = Env::from_env();
+    let mut env = Env::from_env();
 
-    if let Some(old) = &env.old_data_dir {
-        if !env.data_dir.exists() && old.exists() {
-            if let Err(e) = tokio::fs::rename(old, &env.data_dir).await {
-                log!("could not move {}: {e}", old.display());
-            }
+    let mut not_moved = None;
+    let old = env.old_data_dirs.iter().find(|d| d.exists()).cloned();
+    if let Some(old) = old.filter(|_| !env.data_dir.exists()) {
+        if let Err(e) = tokio::fs::rename(&old, &env.data_dir).await {
+            // windows won't move it while something in it is open, e.g. a tosu it downloaded. next start tries again
+            not_moved = Some(format!("could not move {} to {}: {e}", old.display(), env.data_dir.display()));
+            env = env.with_data_dir(old);
         }
     }
     create_private_dir(&env.data_dir).await.map_err(|e| format!("cannot create {}: {e}", env.data_dir.display()))?;
     if opts.log_file {
         open_log_file(&env.data_dir);
+    }
+    if let Some(why) = not_moved {
+        log!("{why}");
     }
     let config: Config = match read_json_file(&env.config_file).await.map(serde_json::from_value) {
         Some(Ok(c)) => c,
