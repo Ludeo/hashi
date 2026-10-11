@@ -179,6 +179,11 @@ fn direct_base(caps: &Value) -> Option<String> {
     fine.then(|| raw.trim_end_matches('/').to_string())
 }
 
+// the profile endpoint is on the same host, outside api_prefix
+fn backend_origin(caps: &Value) -> Option<String> {
+    Some(url::Url::parse(&direct_base(caps)?).ok()?.origin().ascii_serialization())
+}
+
 const DIRECT_PAUSE_MS: i64 = 5 * 60_000;
 
 // direct first while it answers, the site always last
@@ -658,9 +663,14 @@ async fn load_profile(b: &Arc<Bridge>) {
         id
     };
     let id = crate::types::text(&user_id);
+    // a.ppy.sh/{id} is cached for a month, the profile's url changes with the avatar
     b.st().profile = crate::Profile { user_id, avatar_url: Some(format!("https://a.ppy.sh/{id}")), accent: None };
-    if !b.env.live_backend_url.is_empty() {
-        let url = format!("{}/api/profiles/{id}/cached-snapshot", b.env.live_backend_url);
+    let backend = match &b.env.live_backend_url {
+        u if !u.is_empty() => Some(u.clone()),
+        _ => caps(b).await.ok().as_ref().and_then(backend_origin),
+    };
+    if let Some(backend) = backend {
+        let url = format!("{backend}/api/profiles/{id}/cached-snapshot");
         match b.client().get(&url).timeout(Duration::from_secs(10)).send().await {
             Ok(res) => {
                 let user = if res.status().is_success() { res.json::<Value>().await.ok().and_then(|v| v.get("user").cloned()) } else { None };
@@ -960,6 +970,9 @@ pub(crate) mod tests {
         for bad in [json!("ftp://x/v1"), json!("not a url"), json!("https://x/v1?a=b"), json!(5)] {
             assert_eq!(direct_base(&json!({ "api_base_url": bad })), None);
         }
+        let origin = |u: &str| backend_origin(&json!({ "api_base_url": u }));
+        assert_eq!(origin("https://api.mania-tracker.com/api/integrations/companella/v1"), Some("https://api.mania-tracker.com".into()));
+        assert_eq!(origin("http://localhost:7227/api/integrations/companella/v1/"), Some("http://localhost:7227".into()));
         site_server.abort();
         direct_server.abort();
         std::fs::remove_dir_all(dir).ok();
