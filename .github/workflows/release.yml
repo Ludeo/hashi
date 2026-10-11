@@ -19,7 +19,7 @@ jobs:
           - os: windows-latest
             bundles: nsis
             # no space: github turns those into dots
-            assets: Hashi[ext]
+            assets: Hashi-Setup[ext]
           # the oldest supported ubuntu, so the appimage runs on older systems too
           - os: ubuntu-22.04
             bundles: appimage,deb,rpm

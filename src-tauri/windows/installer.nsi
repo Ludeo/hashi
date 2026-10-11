@@ -666,6 +666,13 @@ Section Install
 
   !insertmacro CheckIfAppIsRunning "$INSTDIR\${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
 
+  ; hashi: older versions installed mania-bridge.exe, which may still be running
+  ReadRegStr $OldMainBinaryName SHCTX "${UNINSTKEY}" "MainBinaryName"
+  ${If} $OldMainBinaryName != ""
+  ${AndIf} $OldMainBinaryName != "${MAINBINARYNAME}.exe"
+    !insertmacro CheckIfAppIsRunning "$INSTDIR\$OldMainBinaryName" "${PRODUCTNAME}"
+  ${EndIf}
+
   ; Copy main executable
   File "${MAINBINARYSRCPATH}"
 
@@ -744,6 +751,15 @@ Section Install
   !insertmacro MUI_STARTMENU_WRITE_BEGIN Application
     Call CreateOrUpdateStartMenuShortcut
   !insertmacro MUI_STARTMENU_WRITE_END
+
+  ; hashi: a desktop shortcut on a first install from a double-click, so one deleted by hand stays
+  ; deleted. one from an older install is retargeted
+  ${If} $WasSilent <> 1
+  ${AndIf} $OldMainBinaryName == ""
+    Call CreateOrUpdateDesktopShortcut
+  ${ElseIf} ${FileExists} "$DESKTOP\${PRODUCTNAME}.lnk"
+    Call CreateOrUpdateDesktopShortcut
+  ${EndIf}
 
   !ifmacrodef NSIS_HOOK_POSTINSTALL
     !insertmacro NSIS_HOOK_POSTINSTALL

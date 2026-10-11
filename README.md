@@ -33,8 +33,10 @@ reached, plays wait on your computer until it's back.
 Download the latest version from [mania-tracker.com/hashi](https://mania-tracker.com/hashi). Every
 release is also on the [Releases](../../releases) page.
 
-On Windows, open `Hashi.exe`. It installs for your user in a few seconds, with no admin rights, and
-opens the app. If Windows says "Windows protected your PC", click "More info", then "Run anyway".
+On Windows, open `Hashi-Setup.exe`. It installs Hashi for your user in a few seconds, with no admin
+rights, and opens it. If Windows says "Windows protected your PC", click "More info", then "Run
+anyway". After that, open Hashi from the desktop or the Start menu. The app itself is
+`%LOCALAPPDATA%\Hashi\Hashi.exe`, so you can delete `Hashi-Setup.exe`.
 
 On Linux:
 
@@ -81,6 +83,9 @@ updating tosu.
 
 If a play doesn't show up, check that the line under your name doesn't say tosu isn't running. Only
 finished plays count. If a play says "Not submitted", the reason is written under the stamp.
+
+If you route apps through a VPN or a firewall, add `%LOCALAPPDATA%\Hashi\Hashi.exe`, not the setup
+file.
 
 For anything else, the log `bridge.log` in the data folder is the place to look, and worth
 attaching to a report.
