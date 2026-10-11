@@ -582,7 +582,11 @@ button.link, a.link {
   background: var(--osu-b5);
   user-select: none;
 }
-.titlebar img { width: 16px; height: 16px; border-radius: 9999px; }
+/* the logo is drawn for the default hue, 333 */
+.titlebar img {
+  width: 16px; height: 16px; border-radius: 9999px;
+  filter: hue-rotate(calc((var(--hue) - 333) * 1deg)) saturate(var(--sat));
+}
 .titlebar .name { margin-left: 8px; font-size: 12px; font-weight: 600; color: var(--osu-f1); }
 .titlebar button {
   display: grid;
