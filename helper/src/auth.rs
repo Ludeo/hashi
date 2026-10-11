@@ -146,7 +146,7 @@ fn dpop_proof(s: &mut State, method: &str, url: &str, access_token: Option<&str>
 
 pub(crate) async fn load_capabilities(b: &Arc<Bridge>) -> Result<Value, Fail> {
     let url = format!("{}/api/integrations/companella/v1/capabilities", b.env.origin);
-    let res = b.http.get(&url).timeout(Duration::from_secs(10)).send().await.map_err(|e| Fail::Other(net_message(&e)))?;
+    let res = b.client().get(&url).timeout(Duration::from_secs(10)).send().await.map_err(|e| Fail::Other(net_message(&e)))?;
     if !res.status().is_success() {
         return Err(Fail::Other(format!("capabilities answered {}", res.status().as_u16())));
     }
@@ -208,13 +208,15 @@ async fn send_routed(b: &Arc<Bridge>, urls: &[String], req: &Req, auth: bool) ->
     send(b, site, req, auth).await
 }
 
+pub(crate) const TIMED_OUT: &str = "Network error: timed out";
+
 pub(crate) fn net_message(e: &reqwest::Error) -> String {
     let mut root: &dyn std::error::Error = e;
     while let Some(next) = root.source() {
         root = next;
     }
     if e.is_timeout() {
-        "Network error: timed out".into()
+        TIMED_OUT.into()
     } else {
         format!("Network error: {root}")
     }
@@ -227,7 +229,7 @@ async fn attempt(b: &Arc<Bridge>, url: &str, req: &Req, auth: bool, nonce: Optio
         let proof = dpop_proof(&mut s, req.method.as_str(), url, token.as_deref(), nonce.as_deref())?;
         (token, proof)
     };
-    let mut rb = b.http.request(req.method.clone(), url).timeout(req.timeout).header("dpop", proof);
+    let mut rb = b.client().request(req.method.clone(), url).timeout(req.timeout).header("dpop", proof);
     for (k, v) in &req.headers {
         rb = rb.header(*k, v);
     }
@@ -659,7 +661,7 @@ async fn load_profile(b: &Arc<Bridge>) {
     b.st().profile = crate::Profile { user_id, avatar_url: Some(format!("https://a.ppy.sh/{id}")), accent: None };
     if !b.env.live_backend_url.is_empty() {
         let url = format!("{}/api/profiles/{id}/cached-snapshot", b.env.live_backend_url);
-        match b.http.get(&url).timeout(Duration::from_secs(10)).send().await {
+        match b.client().get(&url).timeout(Duration::from_secs(10)).send().await {
             Ok(res) => {
                 let user = if res.status().is_success() { res.json::<Value>().await.ok().and_then(|v| v.get("user").cloned()) } else { None };
                 if let Some(user) = user {
@@ -788,10 +790,14 @@ pub(crate) fn done_url(port: u16, ok: bool) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
-    fn test_bridge(origin: &str) -> (Arc<Bridge>, std::path::PathBuf) {
+    pub(crate) fn new_key() -> Key {
+        create_key()
+    }
+
+    pub(crate) fn test_bridge(origin: &str) -> (Arc<Bridge>, std::path::PathBuf) {
         let dir = std::env::temp_dir().join(format!("mania-auth-test-{}", uuid::Uuid::new_v4()));
         let mut env = Env::from_env();
         env.origin = origin.into();
@@ -801,11 +807,17 @@ mod tests {
         env.queue_file = dir.join("queue.json");
         env.chart_index_file = dir.join("chart-index.json");
         env.blob_dir = dir.join("blobs");
-        let b = Arc::new(Bridge {
+        let http = || reqwest::Client::builder().no_proxy();
+        (bridge_with(env, http().build().unwrap(), http().http1_only().pool_max_idle_per_host(0).build().unwrap()), dir)
+    }
+
+    pub(crate) fn bridge_with(env: Env, http: reqwest::Client, http_fresh: reqwest::Client) -> Arc<Bridge> {
+        Arc::new(Bridge {
             env,
             opts: Default::default(),
             st: Mutex::new(crate::tests::blank_state()),
-            http: reqwest::Client::builder().no_proxy().build().unwrap(),
+            http,
+            http_fresh,
             rt: tokio::runtime::Handle::current(),
             session_id: "test-session".into(),
             session_started_at: iso_now(),
@@ -814,8 +826,7 @@ mod tests {
             wake_gen: std::sync::atomic::AtomicU64::new(0),
             queue_write: tokio::sync::Mutex::new(()),
             config_write: tokio::sync::Mutex::new(()),
-        });
-        (b, dir)
+        })
     }
 
     #[tokio::test]

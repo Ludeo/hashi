@@ -6,7 +6,7 @@ use bytes::Bytes;
 use serde_json::{json, Value};
 
 use crate::auth::{self, api, Fail, Req, Resp};
-use crate::types::{Blob, Item, ItemError};
+use crate::types::{Item, ItemError};
 use crate::{log, now_ms, replays, Bridge};
 
 const TERMINAL_STATES: [&str; 4] = ["accepted", "rejected", "expired", "deleted"];
@@ -253,19 +253,12 @@ async fn step(b: &Arc<Bridge>, item: &mut Item) -> Result<(), Fail> {
             new_poll(item);
             return Ok(());
         }
-        if crate::types::truthy(receipt.get("needs_replay").unwrap_or(&Value::Null)) {
-            let path = receipt.get("replay_upload_path").cloned().unwrap_or(Value::Null);
-            let blob = item.replay.clone();
-            let Some(next) = upload(b, item, &path, blob).await? else { return Ok(()) };
-            receipt = next;
-        }
-        if crate::types::truthy(receipt.get("needs_beatmap").unwrap_or(&Value::Null)) {
-            let path = receipt.get("beatmap_upload_path").cloned().unwrap_or(Value::Null);
-            let blob = item.chart.clone();
-            if upload(b, item, &path, blob).await?.is_none() {
-                return Ok(());
+        // each answer is the latest receipt, another play can have sent the chart by now
+        for asset in ["replay", "beatmap"] {
+            if needs(&receipt, asset) {
+                let Some(next) = upload(b, item, asset, &receipt).await? else { return Ok(()) };
+                receipt = next;
             }
-            item.chart_sent = true;
         }
         // removed, held or sending turned off while the files went up: completing is what makes it count
         if !still_wanted(b, &item.id) {
@@ -366,25 +359,111 @@ fn upload_path(api_prefix: &str, p: &Value) -> Result<String, Fail> {
     Ok(rest.to_string())
 }
 
-async fn upload(b: &Arc<Bridge>, item: &mut Item, path: &Value, blob: Option<Blob>) -> Result<Option<Value>, Fail> {
-    let blob = blob.ok_or_else(|| Fail::Other("Nothing stored to upload.".into()))?;
-    let bytes = replays::read_blob(b, &blob).await.map_err(Fail::Other)?;
-    let caps = auth::caps(b).await?;
-    let url = upload_path(caps.get("api_prefix").and_then(Value::as_str).unwrap_or(""), path)?;
-    let req = Req {
+fn needs(receipt: &Value, asset: &str) -> bool {
+    crate::types::truthy(receipt.get(format!("needs_{asset}").as_str()).unwrap_or(&Value::Null))
+}
+
+const STALL_SECS: u64 = if cfg!(test) { 1 } else { 15 };
+const PART_BYTES: usize = 12 * 1024;
+const PART_TRIES: u32 = 4;
+
+fn put_req(body: Bytes, timeout: Duration) -> Req {
+    Req {
         method: reqwest::Method::PUT,
         headers: vec![("content-type", "application/octet-stream".into())],
-        body: Some(Bytes::from(bytes)),
-        // server cuts uploads at 4 min
-        timeout: Duration::from_secs(5 * 60),
-    };
-    let res = api(b, &url, req).await?;
-    let body = res.json();
+        body: Some(body),
+        timeout,
+    }
+}
+
+fn uploaded(b: &Arc<Bridge>, item: &mut Item, asset: &str, res: &Resp, body: Value) -> Result<Option<Value>, Fail> {
     if !res.ok() {
-        return handle_error(b, item, &res, &body, "upload");
+        return handle_error(b, item, res, &body, "upload");
+    }
+    // a part for a file the server no longer needs isn't kept
+    if asset == "beatmap" && body.pointer("/upload/stored") != Some(&Value::Bool(false)) {
+        item.chart_sent = true;
     }
     item.receipt = Some(body.clone());
     Ok(Some(body))
+}
+
+async fn upload(b: &Arc<Bridge>, item: &mut Item, asset: &str, receipt: &Value) -> Result<Option<Value>, Fail> {
+    let blob = if asset == "replay" { item.replay.clone() } else { item.chart.clone() };
+    let blob = blob.ok_or_else(|| Fail::Other("Nothing stored to upload.".into()))?;
+    let bytes = Bytes::from(replays::read_blob(b, &blob).await.map_err(Fail::Other)?);
+    let caps = auth::caps(b).await?;
+    let path = receipt.get(format!("{asset}_upload_path").as_str()).unwrap_or(&Value::Null);
+    let url = upload_path(caps.get("api_prefix").and_then(Value::as_str).unwrap_or(""), path)?;
+    let part = caps.pointer("/chunked_upload/max_part_bytes").and_then(Value::as_u64).map(|m| (m as usize).min(PART_BYTES)).filter(|&m| m > 0);
+    let Some(part) = part else {
+        // server cuts uploads at 4 min
+        let res = api(b, &url, put_req(bytes, Duration::from_secs(5 * 60))).await?;
+        let body = res.json();
+        return uploaded(b, item, asset, &res, body);
+    };
+    if !b.st().stalled {
+        // 15s plus 32 KB/s, so a big chart on a slow line isn't taken for a stall
+        let timeout = Duration::from_secs(STALL_SECS) + Duration::from_millis(bytes.len() as u64 / 32);
+        match api(b, &url, put_req(bytes.clone(), timeout)).await {
+            Err(Fail::Other(m)) if m == auth::TIMED_OUT => {
+                log!("{}: the {asset} upload stalled, sending files in parts and every request on a new connection from now on", title(item));
+                b.st().stalled = true;
+                // another play can have sent it while this one hung
+                let Some(now) = read_receipt(b, item).await? else { return Ok(None) };
+                if !needs(&now, asset) {
+                    return Ok(Some(now));
+                }
+            }
+            res => {
+                let res = res?;
+                let body = res.json();
+                return uploaded(b, item, asset, &res, body);
+            }
+        }
+    }
+    upload_parts(b, item, asset, &url, &bytes, part).await
+}
+
+// each part on a new connection, see State::stalled
+async fn upload_parts(b: &Arc<Bridge>, item: &mut Item, asset: &str, url: &str, bytes: &Bytes, part: usize) -> Result<Option<Value>, Fail> {
+    let mut offset = 0;
+    let mut restarted = false;
+    loop {
+        let end = (offset + part).min(bytes.len());
+        let res = send_part(b, &format!("{url}/parts/{offset}"), bytes.slice(offset..end)).await?;
+        let body = res.json();
+        // the server drops the parts it had
+        if !res.ok() && !restarted && body.pointer("/error/code").and_then(Value::as_str) == Some("digest_mismatch") {
+            restarted = true;
+            offset = 0;
+            continue;
+        }
+        if !res.ok() || body.pointer("/upload/complete") == Some(&Value::Bool(true)) {
+            return uploaded(b, item, asset, &res, body);
+        }
+        if !needs(&body, asset) {
+            item.receipt = Some(body.clone());
+            return Ok(Some(body));
+        }
+        if end == bytes.len() {
+            return Err(Fail::Other(format!("The server didn't get all of the {asset}.")));
+        }
+        offset = end;
+    }
+}
+
+async fn send_part(b: &Arc<Bridge>, path: &str, body: Bytes) -> Result<Resp, Fail> {
+    let mut tries = 1;
+    loop {
+        match api(b, path, put_req(body.clone(), Duration::from_secs(STALL_SECS))).await {
+            Err(Fail::Other(m)) if tries < PART_TRIES => {
+                log!("upload part {path}: {m}, sending it again");
+                tries += 1;
+            }
+            res => return res,
+        }
+    }
 }
 
 async fn poll(b: &Arc<Bridge>, item: &mut Item) -> Result<(), Fail> {
@@ -607,6 +686,248 @@ mod tests {
             assert_eq!(path(bad), None, "{bad}");
         }
         assert!(super::upload_path(p, &json!(null)).is_err());
+    }
+
+    #[tokio::test]
+    async fn stalled_upload_goes_in_parts_on_new_connections() {
+        use axum::extract::{ConnectInfo, Path, State};
+        use axum::routing::{get, put};
+        use std::net::SocketAddr;
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Default)]
+        struct Seen {
+            whole: u32,
+            parts: Vec<(usize, u16)>,
+            got: Vec<u8>,
+            stalled_once: bool,
+            held_already: bool,
+            gets: Vec<u16>,
+        }
+        type S = State<Arc<Mutex<Seen>>>;
+        let reply = |v: serde_json::Value| axum::response::Response::builder().header("content-type", "application/json").body(axum::body::Body::from(v.to_string())).unwrap();
+        let app = axum::Router::new()
+            .route("/api/submissions/s1", get(move |State(st): S, ConnectInfo(peer): ConnectInfo<SocketAddr>| async move {
+                let mut s = st.lock().unwrap();
+                s.gets.push(peer.port());
+                reply(json!({ "state": "awaiting_assets", "needs_beatmap": !s.held_already }))
+            }))
+            .route("/api/submissions/s1/beatmap", put(move |State(st): S| async move {
+                st.lock().unwrap().whole += 1;
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            }))
+            .route("/api/submissions/s1/beatmap/parts/{offset}", put(move |State(st): S, ConnectInfo(peer): ConnectInfo<SocketAddr>, Path(offset): Path<usize>, body: bytes::Bytes| async move {
+                let stall = {
+                    let mut s = st.lock().unwrap();
+                    let first = offset > 0 && !s.stalled_once;
+                    s.stalled_once |= first;
+                    first
+                };
+                if stall {
+                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                }
+                let mut s = st.lock().unwrap();
+                s.parts.push((offset, peer.port()));
+                if s.held_already {
+                    return reply(json!({ "state": "awaiting_assets", "needs_beatmap": false, "upload": { "asset": "beatmap", "complete": true, "stored": false } }));
+                }
+                s.got.truncate(offset);
+                s.got.extend_from_slice(&body);
+                let complete = s.got.len() == 30_000;
+                reply(json!({ "state": "awaiting_assets", "needs_beatmap": !complete, "upload": { "asset": "beatmap", "received_bytes": s.got.len(), "byte_length": 30_000, "complete": complete, "stored": true } }))
+            }));
+        let seen = Arc::new(Mutex::new(Seen::default()));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let app = app.with_state(seen.clone()).into_make_service_with_connect_info::<SocketAddr>();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let (b, dir) = crate::auth::tests::test_bridge(&origin);
+        let chart: Vec<u8> = (0..30_000u32).map(|i| (i % 251) as u8).collect();
+        let sha = crate::replays::sha256_hex(&chart);
+        std::fs::create_dir_all(&b.env.blob_dir).unwrap();
+        std::fs::write(b.env.blob_dir.join(&sha), &chart).unwrap();
+        {
+            let mut s = b.st();
+            s.config.key = Some(crate::auth::tests::new_key());
+            s.access_token = Some("test-access".into());
+            s.access_expires_at = crate::now_ms() + 3_600_000;
+            s.caps = Some(json!({ "issuer": origin, "api_prefix": "/api", "chunked_upload": { "max_part_bytes": 16384 } }));
+        }
+        let mut item: crate::types::Item = serde_json::from_value(json!({
+            "id": "i1", "capturedAt": "", "phase": "send", "submissionId": "s1", "play": { "beatmapMd5": "m" },
+            "chart": { "sha256": sha, "byteLength": 30_000 },
+        }))
+        .unwrap();
+        let receipt = json!({ "state": "awaiting_assets", "needs_beatmap": true, "beatmap_upload_path": "/api/submissions/s1/beatmap" });
+        let gets = |b: &Arc<crate::Bridge>, mut item: crate::types::Item| {
+            let (b, seen) = (b.clone(), seen.clone());
+            async move {
+                seen.lock().unwrap().gets.clear();
+                for _ in 0..3 {
+                    super::read_receipt(&b, &mut item).await.ok().unwrap();
+                }
+                seen.lock().unwrap().gets.iter().copied().collect::<std::collections::HashSet<u16>>().len()
+            }
+        };
+        assert_eq!(gets(&b, item.clone()).await, 1, "kept alive while nothing stalled");
+
+        let done = super::upload(&b, &mut item, "beatmap", &receipt).await.ok().unwrap();
+        let done = done.unwrap_or_else(|| panic!("{}", serde_json::to_string(&item.error).unwrap()));
+        assert_eq!(done["needs_beatmap"], json!(false));
+        assert!(item.chart_sent);
+        {
+            let s = seen.lock().unwrap();
+            assert_eq!(s.whole, 1);
+            assert_eq!(s.got, chart);
+            assert_eq!(s.parts.iter().map(|p| p.0).collect::<Vec<_>>(), [0, 12288, 24576]);
+            let ports: std::collections::HashSet<u16> = s.parts.iter().map(|p| p.1).collect();
+            assert_eq!(ports.len(), 3, "every part on its own connection");
+        }
+        assert_eq!(gets(&b, item.clone()).await, 3, "after a stall every request dials again");
+
+        // the rest of the session goes straight to parts
+        seen.lock().unwrap().parts.clear();
+        super::upload(&b, &mut item, "beatmap", &receipt).await.ok().unwrap().unwrap();
+        assert_eq!(seen.lock().unwrap().whole, 1);
+        assert_eq!(seen.lock().unwrap().parts.len(), 3);
+
+        // another play sent the chart meanwhile: the part isn't kept, so it wasn't this client's
+        item.chart_sent = false;
+        seen.lock().unwrap().held_already = true;
+        let r = super::upload(&b, &mut item, "beatmap", &receipt).await.ok().unwrap().unwrap();
+        assert_eq!(r["upload"]["stored"], json!(false));
+        assert!(!item.chart_sent);
+
+        // or while the whole upload hung, then no parts go out at all
+        b.st().stalled = false;
+        seen.lock().unwrap().parts.clear();
+        let r = super::upload(&b, &mut item, "beatmap", &receipt).await.ok().unwrap().unwrap();
+        assert_eq!(r["needs_beatmap"], json!(false));
+        assert!(!item.chart_sent);
+        assert!(seen.lock().unwrap().parts.is_empty());
+
+        server.abort();
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    // first `budget` bytes of each connection go through, then it hangs like the RU throttle
+    async fn throttle_proxy(budget: usize) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        tokio::spawn(async move {
+            loop {
+                let (mut c, _) = l.accept().await.unwrap();
+                tokio::spawn(async move {
+                    let mut buf = vec![0u8; 65536];
+                    let mut head = Vec::new();
+                    while !head.windows(2).any(|w| w == b"\r\n") {
+                        let n = c.read(&mut buf).await.unwrap_or(0);
+                        if n == 0 {
+                            return;
+                        }
+                        head.extend_from_slice(&buf[..n]);
+                    }
+                    let line = String::from_utf8_lossy(&head).lines().next().unwrap_or("").to_string();
+                    println!("throttle: new connection, {}", line.split(' ').take(2).collect::<Vec<_>>().join(" "));
+                    let Some(authority) = line.split(' ').nth(1).and_then(|u| u.strip_prefix("http://")).and_then(|r| r.split('/').next()).map(String::from) else { return };
+                    let Ok(up) = tokio::net::TcpStream::connect(&authority).await else { return };
+                    let (mut cr, mut cw) = c.into_split();
+                    let (mut ur, mut uw) = up.into_split();
+                    let up_task = async move {
+                        let mut sent = 0;
+                        let mut chunk = head;
+                        loop {
+                            let take = chunk.len().min(budget - sent);
+                            if uw.write_all(&chunk[..take]).await.is_err() {
+                                return;
+                            }
+                            sent += take;
+                            if sent == budget {
+                                println!("throttle: {authority} connection stalled after {budget} bytes");
+                                while cr.read(&mut buf).await.unwrap_or(0) > 0 {}
+                                return;
+                            }
+                            let n = cr.read(&mut buf).await.unwrap_or(0);
+                            if n == 0 {
+                                return;
+                            }
+                            chunk = buf[..n].to_vec();
+                        }
+                    };
+                    tokio::select! {
+                        _ = up_task => {}
+                        _ = tokio::io::copy(&mut ur, &mut cw) => {}
+                    }
+                });
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    // a real play from a copy of a dev data dir connected to localhost:3000, through the throttle:
+    // HASHI_REAL_DIR=/tmp/hashi-real [HASHI_REAL_PICK=title] [THROTTLE_BYTES=6000] [PART_BYTES=4096] cargo test real_upload -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore]
+    async fn real_upload_through_a_throttle() {
+        let Some(dir) = std::env::var_os("HASHI_REAL_DIR").map(std::path::PathBuf::from) else { return };
+        let num = |k: &str, d: usize| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
+        let proxy = throttle_proxy(num("THROTTLE_BYTES", 6000)).await;
+        let mut env = crate::Env::from_env();
+        env.origin = "http://localhost:3000".into();
+        env.data_dir = dir.clone();
+        env.config_file = dir.join("config.json");
+        env.queue_file = dir.join("queue.json");
+        env.blob_dir = dir.join("blobs");
+        let client = |fresh: bool| {
+            let c = reqwest::Client::builder().proxy(reqwest::Proxy::http(&proxy).unwrap());
+            if fresh { c.http1_only().pool_max_idle_per_host(0) } else { c }.build().unwrap()
+        };
+        let b = crate::auth::tests::bridge_with(env, client(false), client(true));
+        b.st().config = serde_json::from_value(crate::read_json_file(&b.env.config_file).await.unwrap()).unwrap();
+        let pick = std::env::var("HASHI_REAL_PICK").unwrap_or("666".into());
+        let queue = crate::read_json_file(&b.env.queue_file).await.unwrap();
+        let raw = queue["items"].as_array().unwrap().iter().rev().find(|i| i["play"]["title"].as_str().is_some_and(|t| t.contains(&pick)) && i["chart"].is_object()).unwrap();
+        let mut item: crate::types::Item = serde_json::from_value(raw.clone()).unwrap();
+        item.id = uuid::Uuid::new_v4().to_string();
+        (item.submission_id, item.receipt, item.error, item.chart_sent, item.attempts) = (None, None, None, false, 0);
+        item.phase = "send".into();
+        println!("play: {} replay {} B, chart {} B", super::title(&item), item.replay.as_ref().unwrap().byte_length, item.chart.as_ref().unwrap().byte_length);
+        b.st().queue.items.push(item.clone());
+        let mut caps = crate::auth::load_capabilities(&b).await.ok().unwrap();
+        caps["chunked_upload"]["max_part_bytes"] = json!(num("PART_BYTES", 4096));
+        b.st().caps = Some(caps);
+
+        let started = std::time::Instant::now();
+        for _ in 0..20 {
+            let r = if item.phase == "poll" {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                super::poll(&b, &mut item).await
+            } else {
+                super::step(&b, &mut item).await
+            };
+            if let Err(e) = r {
+                println!("  error {e}, going on");
+                continue;
+            }
+            let receipt = item.receipt.clone().unwrap_or_default();
+            println!(
+                "{:>5.1}s phase {} state {} needs replay {} chart {} chart_sent {} stalled {} error {}",
+                started.elapsed().as_secs_f64(),
+                item.phase,
+                receipt["state"],
+                receipt["needs_replay"],
+                receipt["needs_beatmap"],
+                item.chart_sent,
+                b.st().stalled,
+                serde_json::to_string(&item.error).unwrap()
+            );
+            if item.phase == "done" || item.phase == "failed" {
+                break;
+            }
+        }
+        println!("receipt: {}", item.receipt.unwrap_or_default());
     }
 
     #[test]

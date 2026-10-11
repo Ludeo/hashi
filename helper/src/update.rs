@@ -61,7 +61,7 @@ fn parse(v: &str) -> Option<Version> {
 async fn latest(b: &Arc<Bridge>) -> Result<Version, String> {
     let url = format!("{}{LATEST_FILE}", b.env.origin);
     let mut res = b
-        .http
+        .client()
         .get(&url)
         .header(CACHE_CONTROL, "no-cache")
         .timeout(Duration::from_secs(15))

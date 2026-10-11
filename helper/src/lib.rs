@@ -269,6 +269,8 @@ pub(crate) struct State {
     pub caps: Option<Value>,
     pub dpop_nonce: Option<String>,
     pub direct_down_until: i64,
+    // an upload stalled this session: some networks stop a connection after its first 16 KB
+    pub stalled: bool,
     pub access_token: Option<String>,
     pub access_expires_at: i64,
     pub signing_key: Option<p256::ecdsa::SigningKey>,
@@ -297,6 +299,8 @@ pub struct Bridge {
     pub(crate) opts: Options,
     st: Mutex<State>,
     http: reqwest::Client,
+    // nothing kept open, every request dials again
+    http_fresh: reqwest::Client,
     rt: tokio::runtime::Handle,
     session_id: String,
     session_started_at: String,
@@ -308,6 +312,14 @@ pub struct Bridge {
 }
 
 impl Bridge {
+    pub(crate) fn client(&self) -> &reqwest::Client {
+        if self.st().stalled {
+            &self.http_fresh
+        } else {
+            &self.http
+        }
+    }
+
     pub(crate) fn st(&self) -> MutexGuard<'_, State> {
         self.st.lock().unwrap_or_else(|e| e.into_inner())
     }
@@ -620,6 +632,13 @@ pub async fn start(opts: Options) -> Result<Arc<Bridge>, String> {
         .user_agent(format!("mania-bridge/{VERSION}"))
         .build()
         .map_err(|e| e.to_string())?;
+    let http_fresh = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .user_agent(format!("mania-bridge/{VERSION}"))
+        .http1_only()
+        .pool_max_idle_per_host(0)
+        .build()
+        .map_err(|e| e.to_string())?;
 
     // after an update the old copy can still be letting go of the port
     let mut tries = 0;
@@ -643,6 +662,7 @@ pub async fn start(opts: Options) -> Result<Arc<Bridge>, String> {
             caps: None,
             dpop_nonce: None,
             direct_down_until: 0,
+            stalled: false,
             access_token: None,
             access_expires_at: 0,
             signing_key: None,
@@ -660,6 +680,7 @@ pub async fn start(opts: Options) -> Result<Arc<Bridge>, String> {
             autostart: None,
         }),
         http,
+        http_fresh,
         rt: tokio::runtime::Handle::current(),
         session_id: uuid::Uuid::new_v4().to_string(),
         session_started_at: iso_now(),
@@ -797,6 +818,7 @@ pub(crate) mod tests {
             caps: None,
             dpop_nonce: None,
             direct_down_until: 0,
+            stalled: false,
             access_token: None,
             access_expires_at: 0,
             signing_key: None,
