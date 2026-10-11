@@ -178,7 +178,7 @@ function getTosu() {
       el("button", { class: "key go", disabled: slow, onclick: get }, "Try again"));
   }
   return el("div", { class: "pinned" },
-    el("p", {}, "Couldn't find tosu on this computer. Hashi can get it for you."),
+    el("p", {}, "Couldn't find tosu on this computer."),
     el("button", { class: "key go", disabled: slow, onclick: get }, "Get tosu"));
 }
 
@@ -993,7 +993,7 @@ function now() {
   if (!tosu.connected) return line(tosu.launch === "with-osu" ? "off" : "missing", "tosu", tosuDetail(tosu));
   if (tosu.blocked) return line("missing", "osu!", "tosu can't read it");
   if (!tosu.osu) return line("off", "osu!", "Not open");
-  return line("on", gameName(tosu), osuLabel(tosu), el("span", { class: "as" }, "as ", el("b", {}, tosu.player || "Guest")));
+  return line("on", gameName(tosu), el("span", {}, osuLabel(tosu), " as ", el("b", {}, tosu.player || "Guest")));
 }
 
 function waiting() {
