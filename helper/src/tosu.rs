@@ -35,6 +35,8 @@ pub(crate) struct LastPlay {
     chart_file: Option<String>,
     // relative to Songs (or files/ on lazer), for the cover in the ui
     cover: Option<Cover>,
+    // past the last note and not failed: quitting partway saves no score
+    completed: bool,
 }
 
 pub(crate) struct PendingFinish {
@@ -283,7 +285,24 @@ fn on_tosu_message(b: &Arc<Bridge>, raw: Value) {
                         _ => None,
                     }
                 },
+                completed: {
+                    let at = |k: &str| bm.pointer(&format!("/time/{k}")).and_then(Value::as_f64).unwrap_or(0.0);
+                    at("lastObject") > 0.0 && at("live") >= at("lastObject") && raw.pointer("/play/failed").and_then(Value::as_bool) != Some(true)
+                },
             });
+        }
+
+        // multiplayer results aren't resultScreen: stable has its own ranking screens, and to tosu
+        // lazer goes straight back to the room (or the playlist)
+        let room_results = if client == "lazer" {
+            !["play", "resultScreen"].contains(&state.as_str())
+        } else {
+            ["rankingVs", "rankingTeam", "rankingTagCoop"].contains(&state.as_str())
+        };
+        if room_results && t.prev_state.as_deref() == Some("play") {
+            if let Some(play) = t.last_play.clone().filter(|p| p.completed) {
+                t.pending_finish = Some(PendingFinish { since: now_ms(), play, viewed: None, stale: None });
+            }
         }
 
         if state == "resultScreen" && t.prev_state.as_deref() != Some("resultScreen") {
@@ -896,6 +915,8 @@ pub(crate) async fn set_dashboard(b: &Arc<Bridge>, on: bool) -> Result<(), Strin
 
 #[cfg(test)]
 mod tests {
+    use serde_json::{json, Value};
+
     #[test]
     fn paths() {
         if cfg!(not(windows)) {
@@ -922,5 +943,45 @@ mod tests {
         assert_eq!(super::shell_quote("/home/a/.local/bin/tosu"), "/home/a/.local/bin/tosu");
         assert_eq!(super::shell_quote("/home/a/My Apps/tosu"), "'/home/a/My Apps/tosu'");
         assert_eq!(super::shell_quote("/x/it's/$tosu"), r"'/x/it'\''s/$tosu'");
+    }
+
+    fn frame(client: &str, state: &str, live: f64) -> Value {
+        json!({
+            "client": client,
+            "state": { "name": state },
+            "profile": { "name": "someone", "userStatus": { "name": "online" } },
+            "play": { "playerName": "someone", "mode": { "number": 3 }, "mods": { "number": 0, "name": "" }, "failed": false },
+            "beatmap": {
+                "checksum": "0123456789abcdef0123456789abcdef",
+                "mode": { "number": 3 },
+                "time": { "live": live, "lastObject": 90_000.0 },
+            },
+        })
+    }
+
+    fn captured(frames: &[Value]) -> usize {
+        let (b, dir) = crate::auth::tests::test_bridge("http://localhost:3000");
+        for f in frames {
+            super::on_tosu_message(&b, f.clone());
+        }
+        let n = b.st().queue.items.len();
+        std::fs::remove_dir_all(dir).ok();
+        n
+    }
+
+    #[tokio::test]
+    async fn room_plays_are_captured_when_finished() {
+        let lazer = |state, live| frame("lazer", state, live);
+        assert_eq!(captured(&[lazer("lobby", 0.0), lazer("play", 30_000.0), lazer("play", 91_000.0), lazer("lobby", 91_500.0)]), 1);
+        let stable = |state, live| frame("stable", state, live);
+        assert_eq!(captured(&[stable("matchSetup", 0.0), stable("play", 91_000.0), stable("rankingVs", 91_500.0)]), 1);
+    }
+
+    #[tokio::test]
+    async fn room_plays_left_partway_are_not() {
+        let lazer = |state, live| frame("lazer", state, live);
+        assert_eq!(captured(&[lazer("lobby", 0.0), lazer("play", 30_000.0), lazer("lobby", 30_100.0)]), 0);
+        let stable = |state, live| frame("stable", state, live);
+        assert_eq!(captured(&[stable("matchSetup", 0.0), stable("play", 30_000.0), stable("matchSetup", 30_100.0)]), 0);
     }
 }
