@@ -243,7 +243,7 @@ fn regex_local(origin: &str) -> bool {
     (host == "localhost" || host == "127.0.0.1") && port_ok && !rest.contains('/')
 }
 
-// what the window wants from the helper: hide | minimize | close | drag
+// what the window wants from the helper: hide | minimize | close | drag | on-top on|off
 pub type WindowHandler = Arc<dyn Fn(&str) + Send + Sync>;
 
 #[derive(Default)]
@@ -388,6 +388,7 @@ impl Bridge {
             "autostart": autostart,
             "tosuAutostart": self.env.tosu_can_start.then(|| s.config.settings.as_ref().is_some_and(|x| x.tosu_autostart)),
             "startInTray": self.opts.tray.then(|| s.config.settings.as_ref().is_some_and(|x| x.start_in_tray)),
+            "onTop": self.opts.on_window.is_some().then(|| s.config.settings.as_ref().is_some_and(|x| x.on_top)),
             "sendPlays": !s.sends_no_plays(),
             "tosuDashboard": self.env.tosu_can_start.then_some(s.tosu.dashboard).flatten(),
             "showDans": !s.config.settings.as_ref().is_some_and(|x| x.hide_dans),
@@ -451,6 +452,18 @@ impl Bridge {
         self.st().config.settings.get_or_insert_with(Default::default).start_in_tray = on;
         let saved = self.save_config().await;
         log!("starting in the tray {}", if on { "on" } else { "off" });
+        self.broadcast();
+        saved
+    }
+
+    pub fn on_top(&self) -> bool {
+        self.st().config.settings.as_ref().is_some_and(|x| x.on_top)
+    }
+
+    pub(crate) async fn set_on_top(self: &Arc<Self>, on: bool) -> bool {
+        self.st().config.settings.get_or_insert_with(Default::default).on_top = on;
+        self.window_action(if on { "on-top on" } else { "on-top off" });
+        let saved = self.save_config().await;
         self.broadcast();
         saved
     }

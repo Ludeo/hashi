@@ -66,6 +66,8 @@ pub struct Settings {
     // dans are rough, some would rather not see them
     #[serde(default, rename = "hideDans", skip_serializing_if = "std::ops::Not::not")]
     pub hide_dans: bool,
+    #[serde(default, rename = "onTop", skip_serializing_if = "std::ops::Not::not")]
+    pub on_top: bool,
     // the site's theme color: hue 0-359, saturation 0-100. unset is the default pink
     #[serde(default, rename = "themeHue", skip_serializing_if = "Option::is_none")]
     pub theme_hue: Option<u16>,

@@ -941,6 +941,7 @@ function settings(c, host, reconnect) {
       "In your browser, each time tosu starts.", " sub"),
     snapshot.autostart != null && toggle("Open Hashi on startup", snapshot.autostart, "autostart"),
     snapshot.startInTray != null && toggle("Start in the tray", snapshot.startInTray, "start-in-tray"),
+    snapshot.onTop != null && toggle("Always on top", snapshot.onTop, "on-top", "The window stays above other windows."),
   ].filter(Boolean);
   return el("div", { class: "settings" },
     el("div", { class: "head" },
@@ -1065,6 +1066,7 @@ function home(c, host) {
 const GEAR = `<path d="M4.10 0.39L5.90 0.39L6.07 1.88L7.16 2.51L8.55 1.92L9.44 3.47L8.24 4.37L8.24 5.63L9.44 6.53L8.55 8.08L7.16 7.49L6.07 8.12L5.90 9.61L4.10 9.61L3.93 8.12L2.84 7.49L1.45 8.08L0.56 6.53L1.76 5.63L1.76 4.37L0.56 3.47L1.45 1.92L2.84 2.51L3.93 1.88z" stroke-linejoin="round"/><circle cx="5" cy="5" r="1.4"/>`;
 const PODIUM = `<path d="M3.5 9.5v-5h3v5M.5 9.5v-3h3M6.5 9.5v-4h3v4M0 9.5h10M5 1l.5 1h1l-.8.7.3 1-1-.6-1 .6.3-1-.8-.7h1z" stroke-linejoin="round"/>`;
 const TRAY = `<path d="M1 1l6 6M7 3v4H3M.5 9.5h9"/>`;
+const PIN = `<path class="head" d="M3 .5h4V4l1.5 1.5h-7L3 4z" stroke-linejoin="round"/><path d="M5 5.5v4"/>`;
 
 function render() {
   if (themeDraft) {
@@ -1077,6 +1079,10 @@ function render() {
     return;
   }
   if (!snapshot) return;
+  if (pin) {
+    pin.classList.toggle("on", !!snapshot.onTop);
+    pin.setAttribute("aria-pressed", String(!!snapshot.onTop));
+  }
 
   const c = snapshot.connection;
   const host = c.origin === OFFICIAL_ORIGIN ? null : c.origin.replace(/^https?:\/\//, "");
@@ -1160,15 +1166,18 @@ function icon(paths) {
 
 // windows: no system frame, so draw a title bar
 let titlebar = null;
+let pin = null;
 function showTitlebar() {
   if (titlebar || !snapshot?.titlebar || location.origin !== BRIDGE) return;
+  pin = snapshot.onTop != null && el("button", { class: "pin", title: "Always on top", onclick: () => action(`on-top/${snapshot.onTop ? "off" : "on"}`) }, icon(PIN));
   titlebar = el("header", {
     class: "titlebar",
     onmousedown: (e) => e.button === 0 && !e.target.closest("button") && windowAction("drag"),
   },
     el("img", { src: "images/app.svg", alt: "", width: 16, height: 16 }),
     el("span", { class: "name" }, "Hashi"),
-    el("button", { class: "tray", title: "Hide to tray", onclick: () => windowAction("hide") }, icon(TRAY)),
+    pin,
+    el("button", { title: "Hide to tray", onclick: () => windowAction("hide") }, icon(TRAY)),
     el("button", { title: "Minimize", onclick: () => windowAction("minimize") }, icon(`<path d="M0 5.5h10"/>`)),
     el("button", { class: "close", title: "Close", onclick: () => windowAction("close") }, icon(`<path d="m.5.5 9 9m0-9-9 9"/>`)),
   );

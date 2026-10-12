@@ -221,6 +221,10 @@ async fn route(b: &Arc<Bridge>, req: Request, has_origin: bool) -> Response<Body
             let ok = b.set_start_in_tray(path == "/start-in-tray/on").await;
             return saved(b, ok);
         }
+        if path == "/on-top/on" || path == "/on-top/off" {
+            let ok = b.set_on_top(path == "/on-top/on").await;
+            return saved(b, ok);
+        }
         if path == "/update/download" {
             update::open_download_page(b);
             return json(200, &b.snapshot());

@@ -24,6 +24,7 @@ struct Args {
     theme: (u16, u8),
     place: Option<Place>,
     opening: bool,
+    on_top: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -52,6 +53,7 @@ fn parse(args: &[String]) -> Args {
         theme,
         place,
         opening: args.iter().any(|a| a == "--opening"),
+        on_top: args.iter().any(|a| a == "--on-top"),
     }
 }
 
@@ -116,6 +118,7 @@ fn build(app: &AppHandle, args: &Args, visible: bool) -> tauri::Result<()> {
         .min_inner_size(360.0, 400.0)
         .center()
         .decorations(!cfg!(windows))
+        .always_on_top(args.on_top)
         // the theme's --osu-b5, no white flash before the page paints
         .background_color(backdrop(args.theme))
         // links that would open a new window (target=_blank) go to the browser instead
@@ -259,6 +262,11 @@ fn command(app: &AppHandle, line: &str) {
         "minimize" => {
             if let Some(w) = app.get_webview_window(MAIN) {
                 let _ = w.minimize();
+            }
+        }
+        "on-top" => {
+            if let Some(w) = app.get_webview_window(MAIN) {
+                let _ = w.set_always_on_top(rest == "on");
             }
         }
         "drag" => {

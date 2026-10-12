@@ -184,6 +184,9 @@ fn open(opening: bool) {
     if opening {
         cmd.arg("--opening");
     }
+    if bridge.on_top() {
+        cmd.arg("--on-top");
+    }
     if let Some(place) = &w.place {
         cmd.arg(format!("--place={place}"));
     }

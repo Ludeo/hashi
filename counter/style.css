@@ -587,7 +587,7 @@ button.link, a.link {
   width: 16px; height: 16px; border-radius: 9999px;
   filter: hue-rotate(calc((var(--hue) - 333) * 1deg)) saturate(var(--sat));
 }
-.titlebar .name { margin-left: 8px; font-size: 12px; font-weight: 600; color: var(--osu-f1); }
+.titlebar .name { margin: 0 auto 0 8px; font-size: 12px; font-weight: 600; color: var(--osu-f1); }
 .titlebar button {
   display: grid;
   place-items: center;
@@ -597,7 +597,8 @@ button.link, a.link {
   background: none;
   color: var(--osu-f1);
 }
-.titlebar .tray { margin-left: auto; }
+.titlebar .pin.on { color: var(--accent); }
+.titlebar .pin.on .head { fill: currentColor; }
 .titlebar .icon { display: grid; }
 .titlebar button:hover { background: var(--osu-b4); color: #fff; }
 .titlebar .close:hover { background: #e81123; }
