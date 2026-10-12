@@ -128,8 +128,64 @@ fn build(app: &AppHandle, args: &Args, visible: bool) -> tauri::Result<()> {
     if let Some(p) = args.place {
         window = window.position(p.x, p.y).inner_size(p.width, p.height).maximized(p.maximized);
     }
-    window.build()?;
+    let _window = window.build()?;
+    #[cfg(windows)]
+    trim_context_menu(&_window);
     Ok(())
+}
+
+// webview2's right-click menu also has save as, print, share and more tools, which do nothing
+// useful for this page
+#[cfg(windows)]
+fn trim_context_menu(w: &WebviewWindow) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{ICoreWebView2_11, COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND, COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND_SEPARATOR};
+    use webview2_com::{take_pwstr, ContextMenuRequestedEventHandler};
+    use windows_core::{Interface, PWSTR};
+
+    const KEEP: [&str; 10] = ["back", "forward", "reload", "undo", "redo", "cut", "copy", "paste", "selectAll", "copyLinkLocation"];
+    let _ = w.with_webview(|v| {
+        // SAFETY: webview2 COM calls on the thread that owns the webview, which is where
+        // with_webview and the event handler run
+        unsafe {
+            let Ok(webview) = v.controller().CoreWebView2().and_then(|w| w.cast::<ICoreWebView2_11>()) else { return };
+            let handler = ContextMenuRequestedEventHandler::create(Box::new(|_, args| {
+                let Some(args) = args else { return Ok(()) };
+                let items = args.MenuItems()?;
+                let mut count = 0;
+                items.Count(&mut count)?;
+                // from the end, so a separator knows whether anything kept comes after it
+                let mut item_after = false;
+                for i in (0..count).rev() {
+                    let item = items.GetValueAtIndex(i)?;
+                    let mut kind = COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND::default();
+                    item.Kind(&mut kind)?;
+                    let keep = if kind == COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND_SEPARATOR {
+                        item_after
+                    } else {
+                        let mut name = PWSTR::null();
+                        item.Name(&mut name)?;
+                        KEEP.contains(&take_pwstr(name).as_str())
+                    };
+                    if keep {
+                        item_after = kind != COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND_SEPARATOR;
+                    } else {
+                        items.RemoveValueAtIndex(i)?;
+                    }
+                }
+                items.Count(&mut count)?;
+                if count > 0 && !item_after {
+                    items.RemoveValueAtIndex(0)?;
+                    count -= 1;
+                }
+                if count == 0 {
+                    args.SetHandled(true)?;
+                }
+                Ok(())
+            }));
+            let mut token = 0;
+            let _ = webview.add_ContextMenuRequested(&handler, &mut token);
+        }
+    });
 }
 
 // the main window loads hidden behind it and comes up once the animation is done
