@@ -137,15 +137,15 @@ fn build(app: &AppHandle, args: &Args, visible: bool) -> tauri::Result<()> {
     Ok(())
 }
 
-// webview2's right-click menu also has save as, print, share and more tools, which do nothing
-// useful for this page
+// webview2's right-click menu is a browser's, with back, refresh, save as, print and share. only
+// the editing items are kept, so it shows on inputs and links and nowhere else
 #[cfg(windows)]
 fn trim_context_menu(w: &WebviewWindow) {
     use webview2_com::Microsoft::Web::WebView2::Win32::{ICoreWebView2_11, COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND, COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND_SEPARATOR};
     use webview2_com::{take_pwstr, ContextMenuRequestedEventHandler};
     use windows_core::{Interface, PWSTR};
 
-    const KEEP: [&str; 10] = ["back", "forward", "reload", "undo", "redo", "cut", "copy", "paste", "selectAll", "copyLinkLocation"];
+    const KEEP: [&str; 7] = ["undo", "redo", "cut", "copy", "paste", "selectAll", "copyLinkLocation"];
     let _ = w.with_webview(|v| {
         // SAFETY: webview2 COM calls on the thread that owns the webview, which is where
         // with_webview and the event handler run
