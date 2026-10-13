@@ -629,6 +629,8 @@ pub(crate) fn public_item(item: &Item, origin: &str, username: Option<&str>) -> 
         "rating": r.map(rating).unwrap_or(Value::Null),
         "md5": item.play.beatmap_md5,
         "rank": r.filter(|r| state_of(r) == "accepted").map(crate::leaderboard::rank).unwrap_or(Value::Null),
+        // the site needed the map and put the play on no board: it has none for this map
+        "noBoard": item.chart_needed == Some(true) && r.is_some_and(|r| state_of(r) == "accepted" && r.get("leaderboard").is_some_and(Value::is_null)),
     })
 }
 

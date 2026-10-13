@@ -489,8 +489,11 @@ function danName(d) {
   return d.ln ? `LN ${name}` : name;
 }
 
+// maps the site said it has no board for, this session
+const boardless = new Set();
+
 function rankButton(p) {
-  if (!p.url || !p.md5) return null;
+  if (!p.url || !p.md5 || (!p.rank && (p.noBoard || boardless.has(p.md5)))) return null;
   const r = p.rank;
   const open = () => openBoard({ md5: p.md5, artist: p.play.artist, title: p.play.title, version: p.play.version, keys: p.play.keys }, false, !!r, r ?? modVariant(modList(p.play.mods)));
   if (!r) return el("button", { class: "link act board-link", onclick: open }, "Leaderboard");
@@ -616,6 +619,7 @@ async function loadBoard() {
     if (res.ok) {
       want.data = body;
       want.error = null;
+      if (body.unknown) boardless.add(want.md5);
     } else {
       want.error = body.error ?? "Couldn't load the leaderboard.";
     }
@@ -712,7 +716,7 @@ function boardView() {
   } else if (data.unsupported) {
     body = el("p", { class: "lead" }, "Mania Tracker can't show leaderboards to Hashi yet.");
   } else if (data.unknown) {
-    body = el("p", { class: "lead" }, "Mania Tracker doesn't know this map yet. Finish it once and it will.");
+    body = el("p", { class: "lead" }, "Mania Tracker has no leaderboard for this map.");
   } else if (!data.entries.length) {
     body = el("p", { class: "lead" }, "Nobody has played this map yet.");
   } else {
