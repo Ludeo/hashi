@@ -24,6 +24,7 @@ fn counter_type(path: &str) -> &'static str {
         "html" => "text/html; charset=utf-8",
         "css" => "text/css",
         "js" => "text/javascript",
+        "json" => "application/json",
         "png" => "image/png",
         "svg" => "image/svg+xml",
         "ttf" => "font/ttf",
@@ -212,6 +213,10 @@ async fn route(b: &Arc<Bridge>, req: Request, has_origin: bool) -> Response<Body
                 Ok(()) => json(200, &b.snapshot()),
                 Err(e) => json(500, &serde_json::json!({ "error": e })),
             };
+        }
+        if path == "/notes/read" {
+            let ok = b.read_notes().await;
+            return saved(b, ok);
         }
         if path == "/show-dans/on" || path == "/show-dans/off" {
             let ok = b.set_show_dans(path == "/show-dans/on").await;

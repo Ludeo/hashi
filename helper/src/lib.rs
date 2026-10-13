@@ -392,6 +392,7 @@ impl Bridge {
             "sendPlays": !s.sends_no_plays(),
             "tosuDashboard": self.env.tosu_can_start.then_some(s.tosu.dashboard).flatten(),
             "showDans": !s.config.settings.as_ref().is_some_and(|x| x.hide_dans),
+            "unreadNotes": s.config.settings.as_ref().and_then(|x| x.notes_read.as_deref()) != Some(VERSION),
             "plays": items.into_iter().map(|i| queue::public_item(i, &self.env.origin, profile.as_deref())).collect::<Vec<_>>(),
         })
     }
@@ -439,6 +440,13 @@ impl Bridge {
 
     pub(crate) async fn set_show_dans(self: &Arc<Self>, on: bool) -> bool {
         self.st().config.settings.get_or_insert_with(Default::default).hide_dans = !on;
+        let saved = self.save_config().await;
+        self.broadcast();
+        saved
+    }
+
+    pub(crate) async fn read_notes(self: &Arc<Self>) -> bool {
+        self.st().config.settings.get_or_insert_with(Default::default).notes_read = Some(VERSION.into());
         let saved = self.save_config().await;
         self.broadcast();
         saved
@@ -638,7 +646,8 @@ pub async fn start(opts: Options) -> Result<Arc<Bridge>, String> {
         }
         None => {
             keep_broken(&env.config_file).await;
-            Config::default()
+            // a first start, there's nothing new to it yet
+            Config { settings: Some(types::Settings { notes_read: Some(VERSION.into()), ..Default::default() }), ..Default::default() }
         }
     };
     let queue = read_json_file(&env.queue_file).await;

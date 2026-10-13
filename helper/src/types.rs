@@ -73,6 +73,9 @@ pub struct Settings {
     pub theme_hue: Option<u16>,
     #[serde(default, rename = "themeSat", skip_serializing_if = "Option::is_none")]
     pub theme_sat: Option<u8>,
+    // the version whose changelog was read. unset on configs from before the changelog, so those see it
+    #[serde(default, rename = "notesRead", skip_serializing_if = "Option::is_none")]
+    pub notes_read: Option<String>,
     #[serde(flatten)]
     pub rest: Map<String, Value>,
 }

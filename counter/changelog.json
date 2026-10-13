@@ -1,0 +1,40 @@
+[
+  {
+    "version": "0.1.3",
+    "changes": [
+      { "kind": "new", "text": "Always on top, from the pin in the title bar or in the settings." },
+      { "kind": "new", "text": "This changelog, shown after an update." },
+      { "kind": "fixed", "text": "Plays in multiplayer rooms weren't sent." },
+      { "kind": "fixed", "text": "Plays on maps without a leaderboard linked to an empty one." },
+      { "kind": "changed", "text": "Right-click menu only shows on text boxes and links." },
+      { "kind": "changed", "text": "Text and images can't be selected or dragged." }
+    ]
+  },
+  {
+    "version": "0.1.2",
+    "date": "2026-10-11",
+    "changes": [
+      { "kind": "new", "text": "Title bar icon follows the theme color." },
+      { "kind": "fixed", "text": "Avatar and profile color could be out of date." }
+    ]
+  },
+  {
+    "version": "0.1.1",
+    "date": "2026-10-11",
+    "changes": [
+      { "kind": "fixed", "text": "Retrying from the results screen was taken for watching a replay, so the play wasn't sent." },
+      { "kind": "changed", "text": "Data folder renamed from mania-bridge to Hashi. The old one is moved over on start." }
+    ]
+  },
+  {
+    "version": "0.1.0",
+    "date": "2026-10-11",
+    "changes": [
+      { "kind": "new", "text": "Sends finished osu!mania plays to Mania Tracker through tosu." },
+      { "kind": "new", "text": "Map leaderboards, with your rank on each play." },
+      { "kind": "new", "text": "Live status on your profile while osu! is open." },
+      { "kind": "new", "text": "Theme color, dans and lazer mod badges." },
+      { "kind": "new", "text": "Downloads and starts tosu if you don't have it." }
+    ]
+  }
+]
