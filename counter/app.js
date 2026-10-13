@@ -1205,6 +1205,9 @@ const PODIUM = `<path d="M3.5 9.5v-5h3v5M.5 9.5v-3h3M6.5 9.5v-4h3v4M0 9.5h10M5 1
 const TRAY = `<path d="M1 1l6 6M7 3v4H3M.5 9.5h9"/>`;
 const PIN = `<path class="head" d="M3 .5h4V4l1.5 1.5h-7L3 4z" stroke-linejoin="round"/><path d="M5 5.5v4"/>`;
 
+// a different view opens at its top, not wherever the last one was scrolled to
+let shownView = null;
+
 function render() {
   if (themeDraft) {
     renderWaiting = true;
@@ -1250,9 +1253,13 @@ function render() {
 
   if (atHome) {
     app.append(el("div", { class: "ground" }, home(c, host), shore(settingsOpen, bottleVersion())));
+    const view = settingsOpen ? "settings" : notesOpen ? "notes" : board ? "board" : "plays";
+    if (view !== shownView) (document.documentElement.classList.contains("framed") ? app : document.scrollingElement).scrollTop = 0;
+    shownView = view;
     fitPage();
     return;
   }
+  shownView = null;
 
   const connecting = c.status === "connecting";
   // it comes from the site's discovery document
