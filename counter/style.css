@@ -563,7 +563,8 @@ button.link, a.link {
 /* windows title bar. main scrolls so the scrollbar stays under it */
 .framed { --titlebar: 32px; }
 .framed, .framed body { height: 100%; overflow: hidden; }
-.framed body { display: flex; flex-direction: column; }
+.framed body { display: flex; flex-direction: column; user-select: none; }
+.framed img { -webkit-user-drag: none; }
 .framed main { flex: 1; width: 100%; max-width: none; overflow-y: auto; }
 .framed body::after {
   content: "";
